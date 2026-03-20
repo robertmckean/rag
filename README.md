@@ -2,7 +2,7 @@
 
 Personal RAG system built from exported ChatGPT and Claude histories.
 
-## Phase 1 Layout
+## Current Layout
 
 - `src/rag/`: project package and future CLI, inspection, parsing, normalization, and storage modules
 - `data/raw/`: immutable source exports grouped by provider
@@ -16,6 +16,14 @@ Personal RAG system built from exported ChatGPT and Claude histories.
 The local workflow is PowerShell-first and uses the Conda environment named in `.conda-env.txt`.
 
 Current project configuration lives in `src/rag/config.py`. The repo-root `config.py` remains as a temporary compatibility shim.
+
+For Python validation in this repo, the practical command pattern is:
+
+```powershell
+$env:PYTHONPATH='src'; python -m unittest ...
+```
+
+`tools/run_in_env.ps1` exists for script-path entry points, but it may be blocked in constrained PowerShell sessions during Conda activation.
 
 ## Phase 1 Pipeline
 
@@ -88,3 +96,33 @@ Known phase-1 limitations:
 - ChatGPT normalization includes only the visible `current_node` chain and excludes alternate branches
 - attachment handling is reference-only
 - retrieval-oriented filtering is deferred to a later phase
+
+## Phase 2 Retrieval
+
+Current retrieval capabilities:
+- BM25-based lexical message ranking
+- contextual message-window retrieval
+- retrieval modes:
+  - `relevance`
+  - `newest`
+  - `oldest`
+  - `relevance_recency`
+  - `timeline`
+- query normalization with quoted-phrase support
+- timeline exploration across conversations within one normalized run
+
+Retrieval CLI:
+```powershell
+$env:PYTHONPATH='src'; @'
+from rag.cli.retrieve import main
+raise SystemExit(main([
+  '--run-dir', 'data/normalized/runs/<run_id>',
+  '--query', 'project',
+  '--mode', 'timeline',
+  '--limit', '10'
+]))
+'@ | python -
+```
+
+Timeline mode returns compact chronological focal-message entries across conversations.
+The other retrieval modes return contextual message windows.
