@@ -30,13 +30,22 @@ class LoadedRun:
 # Load one normalized run and build the lookup structures needed by lexical retrieval.
 def load_normalized_run(run_dir: Path) -> LoadedRun:
     resolved_run_dir = run_dir.resolve()
+    if not resolved_run_dir.exists() or not resolved_run_dir.is_dir():
+        raise FileNotFoundError(f"Run directory not found: {resolved_run_dir}")
+
     conversations_path = resolved_run_dir / "conversations.jsonl"
     messages_path = resolved_run_dir / "messages.jsonl"
     manifest_path = resolved_run_dir / "manifest.json"
+    _require_file(conversations_path)
+    _require_file(messages_path)
+    _require_file(manifest_path)
 
     conversations = _load_jsonl(conversations_path)
     messages = _load_jsonl(messages_path)
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Malformed JSON in {manifest_path}: {exc.msg}") from exc
 
     conversation_by_id: dict[str, dict[str, object]] = {}
     for conversation in conversations:
@@ -114,14 +123,23 @@ def tokenize_query(value: str) -> tuple[str, ...]:
 def _load_jsonl(path: Path) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
+        for line_number, line in enumerate(handle, start=1):
             stripped = line.strip()
             if not stripped:
                 continue
-            payload = json.loads(stripped)
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Malformed JSONL in {path} at line {line_number}: {exc.msg}") from exc
             if isinstance(payload, dict):
                 records.append(payload)
     return records
+
+
+# Fail early when a required normalized artifact is missing from the run directory.
+def _require_file(path: Path) -> None:
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"Required run file not found: {path}")
 
 
 # Sort messages by sequence index first and message id second for stable tie-breaking.

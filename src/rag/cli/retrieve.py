@@ -7,12 +7,12 @@ import json
 from pathlib import Path
 import sys
 
-from rag.retrieval.lexical import RetrievalFilters, retrieve_message_windows
+from rag.retrieval.lexical import RETRIEVAL_MODES, RetrievalFilters, retrieve_message_timeline, retrieve_message_windows
 
 
 # The CLI is a debugging surface for the first retrieval slice rather than a full product interface.
-# It prints compact windowed results for humans and can also emit JSON for inspection.
-# The command reads one immutable run folder and never mutates canonical artifacts.
+# Window modes show local conversation context around a focal message.
+# Timeline mode shows flat chronological entries across conversations for topic-evolution browsing.
 
 
 # Build the parser for the lexical retrieval CLI.
@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-dir", type=Path, required=True, help="Path to one normalized run directory.")
     parser.add_argument("--query", type=str, required=True, help="Query text to rank against normalized messages.")
     parser.add_argument("--limit", type=int, default=10, help="Maximum number of retrieval results to return.")
+    parser.add_argument("--mode", choices=RETRIEVAL_MODES, default="relevance", help="Retrieval ordering mode.")
     parser.add_argument("--provider", type=str, default=None, help="Optional provider filter.")
     parser.add_argument("--conversation-id", type=str, default=None, help="Optional conversation filter.")
     parser.add_argument("--from", dest="date_from", type=str, default=None, help="Optional inclusive lower date bound.")
@@ -42,18 +43,30 @@ def main(argv: list[str] | None = None) -> int:
         date_to=args.date_to,
         author_role=args.author_role,
     )
-    results = retrieve_message_windows(
-        args.run_dir.resolve(),
-        args.query,
-        limit=args.limit,
-        filters=filters,
-    )
-    _safe_print(render_results_summary(args.run_dir.resolve(), args.query, filters, results))
+    try:
+        results = retrieve_message_windows(
+            args.run_dir.resolve(),
+            args.query,
+            limit=args.limit,
+            mode=args.mode,
+            filters=filters,
+        ) if args.mode != "timeline" else retrieve_message_timeline(
+            args.run_dir.resolve(),
+            args.query,
+            limit=args.limit,
+            filters=filters,
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        _safe_print_error(f"error: {exc}")
+        return 2
+
+    _safe_print(render_results_summary(args.run_dir.resolve(), args.query, args.mode, filters, results))
 
     if args.json_out:
         payload = {
             "run_dir": str(args.run_dir.resolve()),
             "query": args.query,
+            "mode": args.mode,
             "filters": filters.__dict__,
             "result_count": len(results),
             "results": [result.to_dict() for result in results],
@@ -73,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
 def render_results_summary(
     run_dir: Path,
     query: str,
+    mode: str,
     filters: RetrievalFilters,
     results: tuple[object, ...],
 ) -> str:
@@ -80,33 +94,73 @@ def render_results_summary(
         "Retrieval Results",
         f"run_dir: {run_dir}",
         f"query: {query}",
+        f"mode: {mode}",
         f"filters: {render_filters(filters)}",
         f"result_count: {len(results)}",
     ]
+    if not results:
+        lines.append("no matching results")
+        return "\n".join(lines)
 
     for result in results:
         lines.append("")
-        lines.append(
-            f"[{result.rank}] score={result.score:.2f} provider={result.provider} conversation={result.conversation_id}"
-        )
-        lines.append(f"  title: {result.conversation_title}")
-        lines.append(
-            f"  focal_message_id: {result.focal_message_id} sequence_index={result.focal_sequence_index}"
-        )
-        lines.append(
-            f"  matched_terms: {', '.join(result.match_basis['matched_text_terms']) or '(none)'}"
-        )
-        lines.append(f"  excerpt: {result.match_basis['focal_match_excerpt']}")
-        lines.append("  window_messages:")
-        for message in result.messages:
-            marker = "*" if message.get("message_id") == result.focal_message_id else "-"
-            snippet = _message_snippet(message)
-            lines.append(
-                f"    {marker} seq={message.get('sequence_index')} role={message.get('author_role')} "
-                f"created_at={message.get('created_at')} id={message.get('message_id')} text={snippet}"
-            )
+        if mode == "timeline":
+            lines.extend(_render_timeline_result(result))
+        else:
+            lines.extend(_render_window_result(result))
 
     return "\n".join(lines)
+
+
+# Render one standard contextual window result.
+def _render_window_result(result: object) -> list[str]:
+    lines = [
+        "  view: contextual_window",
+        f"[{result.rank}] score={result.score:.2f} provider={result.provider} conversation={result.conversation_id}",
+        f"  title: {result.conversation_title}",
+        f"  focal_message_id: {result.focal_message_id} sequence_index={result.focal_sequence_index}",
+        "  ranking: "
+        f"mode={result.match_basis.get('retrieval_mode')} "
+        f"relevance_score={result.match_basis['scoring_features'].get('relevance_score')} "
+        f"recency_boost={result.match_basis['scoring_features'].get('recency_boost')} "
+        f"basis={result.match_basis['scoring_features'].get('chronological_rank_basis')}",
+        "  query_inputs: "
+        f"terms={result.match_basis.get('scoring_terms')} "
+        f"phrases={result.match_basis.get('normalized_phrase_targets')}",
+        f"  matched_terms: {', '.join(result.match_basis['matched_text_terms']) or '(none)'}",
+        f"  excerpt: {result.match_basis['focal_match_excerpt']}",
+        "  window_messages:",
+    ]
+    for message in result.messages:
+        marker = "*" if message.get("message_id") == result.focal_message_id else "-"
+        snippet = _message_snippet(message)
+        lines.append(
+            f"    {marker} seq={message.get('sequence_index')} role={message.get('author_role')} "
+            f"created_at={message.get('created_at')} id={message.get('message_id')} text={snippet}"
+        )
+    return lines
+
+
+# Render one compact cross-conversation timeline result.
+def _render_timeline_result(result: object) -> list[str]:
+    return [
+        "  view: timeline_compact",
+        f"[{result.rank}] created_at={result.focal_created_at} score={result.score:.2f} provider={result.provider}",
+        f"  conversation: {result.conversation_id}",
+        f"  title: {result.conversation_title}",
+        f"  focal_message_id: {result.focal_message_id} sequence_index={result.focal_sequence_index}",
+        f"  author_role: {result.author_role}",
+        "  ranking: "
+        f"mode={result.match_basis.get('retrieval_mode')} "
+        f"basis={result.match_basis['scoring_features'].get('chronological_rank_basis')} "
+        f"relevance_score={result.match_basis['scoring_features'].get('relevance_score')}",
+        "  query_inputs: "
+        f"terms={result.match_basis.get('scoring_terms')} "
+        f"phrases={result.match_basis.get('normalized_phrase_targets')}",
+        f"  matched_terms: {', '.join(result.match_basis['matched_text_terms']) or '(none)'}",
+        f"  excerpt: {result.focal_excerpt}",
+        f"  source_message_path: {result.provenance['source_message_paths'][0]}",
+    ]
 
 
 # Render the active filter set compactly for the terminal summary.
@@ -136,6 +190,13 @@ def _safe_print(value: str) -> None:
     encoding = sys.stdout.encoding or "utf-8"
     safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
     print(safe_value)
+
+
+# Print CLI errors to stderr with the same encoding fallback used for normal output.
+def _safe_print_error(value: str) -> None:
+    encoding = sys.stderr.encoding or "utf-8"
+    safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    print(safe_value, file=sys.stderr)
 
 
 if __name__ == "__main__":
