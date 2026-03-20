@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# The provider set is intentionally small and explicit for the current export pipeline.
+# Inventory only cares about visible file presence, not provider-specific content details.
+# Hidden placeholders such as `.gitkeep` are ignored so readiness reflects real artifacts.
 PROVIDERS = ("chatgpt", "claude")
 
 
@@ -18,6 +21,7 @@ class ProviderInventory:
     relative_files: tuple[str, ...]
 
     @property
+    # Fold folder existence and file presence into one status string for CLI output.
     def status(self) -> str:
         if not self.exists:
             return "missing"
@@ -26,11 +30,13 @@ class ProviderInventory:
         return "ready"
 
     @property
+    # Top-level entries make it easier to confirm which export bundle was discovered.
     def top_level_entries(self) -> tuple[str, ...]:
         entries = {path.split("\\", 1)[0].split("/", 1)[0] for path in self.relative_files}
         return tuple(sorted(entries))
 
 
+# Walk a provider root and return only non-hidden files in deterministic order.
 def iter_visible_files(root: Path) -> tuple[Path, ...]:
     """Return non-hidden files rooted under the provided directory."""
     if not root.exists():
@@ -46,6 +52,7 @@ def iter_visible_files(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(files))
 
 
+# Inspect one provider directory and package the result for the readiness CLI.
 def inspect_provider_root(root: Path, provider: str) -> ProviderInventory:
     """Inspect one provider folder for non-hidden export artifacts."""
     provider_root = root / provider
@@ -59,6 +66,7 @@ def inspect_provider_root(root: Path, provider: str) -> ProviderInventory:
     )
 
 
+# Inspect the full raw root across all supported providers in a stable order.
 def inspect_raw_inputs(raw_root: Path) -> tuple[ProviderInventory, ...]:
     """Inspect all supported provider folders beneath the raw input root."""
     return tuple(inspect_provider_root(raw_root, provider) for provider in PROVIDERS)

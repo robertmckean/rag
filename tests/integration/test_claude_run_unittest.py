@@ -6,7 +6,11 @@ from pathlib import Path
 from src.rag.normalize.claude_run import write_claude_normalized_run
 
 
+# These integration tests validate the Claude-only run writer end to end.
+# The fixture run writes real JSONL and manifest files into a temporary output root.
+# Deterministic output matters because release diffs depend on stable reruns.
 class ClaudeRunIntegrationTests(unittest.TestCase):
+    # Set up an isolated output directory so each test owns its generated artifacts.
     def setUp(self) -> None:
         self.fixture_input = Path("tests/fixtures/claude/sample_bundle/conversations.json")
         self.output_root = Path("tests/_tmp_runs")
@@ -14,10 +18,12 @@ class ClaudeRunIntegrationTests(unittest.TestCase):
         if self.output_root.exists():
             shutil.rmtree(self.output_root, ignore_errors=True)
 
+    # Clean up the temporary output directory after each run-writer test.
     def tearDown(self) -> None:
         if self.output_root.exists():
             shutil.rmtree(self.output_root, ignore_errors=True)
 
+    # Verify that the Claude run writer emits the expected files, counts, and golden records.
     def test_writes_expected_files_and_golden_records(self) -> None:
         run_dir = write_claude_normalized_run(
             self.fixture_input,
@@ -53,6 +59,7 @@ class ClaudeRunIntegrationTests(unittest.TestCase):
         self.assertEqual(first_message["text"], "Hello from block one\n\nHello from block two")
         self.assertEqual(first_message["attachments"][0]["source_ref"], "att-1")
 
+    # Verify that rerunning the same input with the same run metadata is byte-stable.
     def test_output_is_deterministic_for_same_input(self) -> None:
         first_dir = write_claude_normalized_run(
             self.fixture_input,

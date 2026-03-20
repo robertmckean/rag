@@ -9,6 +9,11 @@ from src.rag.config import NORMALIZED_RUNS_DIR
 from src.rag.normalize.chatgpt_run import write_chatgpt_normalized_run
 
 
+# This wrapper limits itself to argument parsing and handing control to the run writer.
+# ChatGPT-specific graph handling stays in the normalization module, not the CLI.
+# The output is a single run directory whose path is printed for follow-up inspection.
+
+# Build the parser for the ChatGPT-only normalization command.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Write a ChatGPT-only normalized run from the raw conversation shard export."
@@ -34,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Parse CLI arguments, write the run, and print the created run directory.
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     run_dir = write_chatgpt_normalized_run(

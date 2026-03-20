@@ -6,7 +6,11 @@ from pathlib import Path
 from src.rag.normalize.combined_run import write_combined_normalized_run
 
 
+# These integration tests validate the combined multi-provider writer end to end.
+# The fixture run checks that provider provenance survives merging into shared JSONL files.
+# Stable combined ordering is important because mixed-provider reruns must diff cleanly.
 class CombinedRunIntegrationTests(unittest.TestCase):
+    # Set up an isolated output directory so each test owns its generated artifacts.
     def setUp(self) -> None:
         self.chatgpt_input = Path("tests/fixtures/chatgpt/sample_export")
         self.claude_input = Path("tests/fixtures/claude/sample_bundle/conversations.json")
@@ -15,10 +19,12 @@ class CombinedRunIntegrationTests(unittest.TestCase):
         if self.output_root.exists():
             shutil.rmtree(self.output_root, ignore_errors=True)
 
+    # Clean up the temporary output directory after each combined-run test.
     def tearDown(self) -> None:
         if self.output_root.exists():
             shutil.rmtree(self.output_root, ignore_errors=True)
 
+    # Verify that the combined writer emits both providers and preserves their provenance.
     def test_writes_combined_outputs_and_preserves_provider_provenance(self) -> None:
         run_dir = write_combined_normalized_run(
             chatgpt_export_root=self.chatgpt_input,
@@ -92,6 +98,7 @@ class CombinedRunIntegrationTests(unittest.TestCase):
         self.assertEqual(claude_message["message_id"], "claude:message:msg-1")
         self.assertEqual(claude_message["provider"], "claude")
 
+    # Verify that rerunning the same combined input with the same run metadata is byte-stable.
     def test_output_is_deterministic_for_same_input(self) -> None:
         first_dir = write_combined_normalized_run(
             chatgpt_export_root=self.chatgpt_input,

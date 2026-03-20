@@ -9,6 +9,11 @@ from src.rag.config import DEFAULT_INPUT_PATH
 from src.rag.inspection.inventory import ProviderInventory, inspect_raw_inputs
 
 
+# This CLI reports whether provider folders are missing, empty, or ready.
+# It deliberately stops at file inventory so users can validate raw inputs safely.
+# The printed report is structured for quick terminal review rather than machine parsing.
+
+# Build the parser for the raw export readiness command.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Inspect raw provider folders and report export-readiness status."
@@ -22,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Render one provider inventory block in the CLI's plain-text report format.
 def render_provider_report(inventory: ProviderInventory, raw_root: Path) -> list[str]:
     relative_root = inventory.root.relative_to(raw_root.parent)
     lines = [
@@ -39,6 +45,7 @@ def render_provider_report(inventory: ProviderInventory, raw_root: Path) -> list
     return lines
 
 
+# Parse arguments, inspect the raw root, and print the readiness report.
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     raw_root = args.input.resolve()

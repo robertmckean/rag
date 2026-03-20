@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 
 
+# The schema keeps shared canonical fields first and provider metadata narrow.
+# `content_blocks` is the authoritative message body representation in phase 1.
+# `text` is only a derived convenience field for downstream inspection and filtering.
 CONVERSATION_SOURCE_METADATA_FIELDS = {
     "chatgpt": {
         "conversation_origin",
@@ -34,12 +37,14 @@ MESSAGE_SOURCE_METADATA_FIELDS = {
 
 @dataclass(frozen=True)
 class ParticipantSummary:
+    # Participant modeling stays intentionally lightweight in phase 1.
     roles: tuple[str, ...] = ()
     authors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class SourceArtifact:
+    # Provenance fields point back to the raw export bundle used for normalization.
     root: str
     conversation_file: str | None = None
     sidecar_files: tuple[str, ...] = ()
@@ -47,6 +52,7 @@ class SourceArtifact:
 
 @dataclass(frozen=True)
 class ConversationSourceMetadata:
+    # Conversation metadata is constrained to the explicit phase-1 allowlist.
     conversation_origin: str | None = None
     is_archived: bool | None = None
     is_starred: bool | None = None
@@ -71,12 +77,14 @@ class CanonicalConversation:
     source_metadata: ConversationSourceMetadata
     participant_summary: ParticipantSummary = field(default_factory=ParticipantSummary)
 
+    # Convert dataclass records into the JSON-serializable shape used by JSONL writers.
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
 
 @dataclass(frozen=True)
 class ContentBlock:
+    # Content blocks preserve structured body information across providers.
     type: str
     text: str | None = None
     start_timestamp: str | None = None
@@ -86,6 +94,7 @@ class ContentBlock:
 
 @dataclass(frozen=True)
 class AttachmentReference:
+    # Attachments stay reference-only so canonical runs do not duplicate raw blobs.
     kind: str
     path: str | None = None
     source_ref: str | None = None
@@ -93,12 +102,14 @@ class AttachmentReference:
 
 @dataclass(frozen=True)
 class MessageSourceArtifact:
+    # Message provenance captures both the source file and the raw path inside that file.
     conversation_file: str | None = None
     raw_message_path: str | None = None
 
 
 @dataclass(frozen=True)
 class MessageSourceMetadata:
+    # Message metadata is limited to fields explicitly needed for phase-1 fidelity.
     content_type: str | None = None
     channel: str | None = None
     status: str | None = None
@@ -124,10 +135,12 @@ class CanonicalMessage:
     text: str | None = None
     attachments: tuple[AttachmentReference, ...] = ()
 
+    # Convert dataclass records into the JSON-serializable shape used by JSONL writers.
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
 
+# Flatten only text blocks into the optional plain-text convenience field.
 def derive_text_from_blocks(content_blocks: tuple[ContentBlock, ...]) -> str | None:
     """Flatten text blocks into a plain-text convenience field."""
     texts = [block.text for block in content_blocks if block.type == "text" and block.text]

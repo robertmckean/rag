@@ -6,6 +6,11 @@ import json
 from pathlib import Path
 
 
+# JSONL is the canonical on-disk format for phase-1 normalized records.
+# Keys are sorted so repeated runs over the same data produce stable output lines.
+# The writer also owns directory creation so callers do not duplicate filesystem setup.
+
+# Write one JSON object per line using stable formatting rules.
 def write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
     """Write records to JSONL with deterministic formatting."""
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -21,6 +21,11 @@ from src.rag.normalize.identifiers import make_conversation_id, make_message_id
 from src.rag.normalize.timestamps import normalize_timestamp
 
 
+# Claude extraction reads only the main conversations export in phase 1.
+# Sender, content blocks, and attachment references are preserved with minimal reshaping.
+# Sidecar datasets stay out of canonical streams so this module remains narrowly scoped.
+
+# Load Claude conversations and map them into canonical conversation and message records.
 def extract_claude_records(
     conversations_path: Path,
 ) -> tuple[list[CanonicalConversation], list[CanonicalMessage]]:
@@ -51,6 +56,7 @@ def extract_claude_records(
         if not isinstance(raw_messages, list):
             raw_messages = []
 
+        # Participant roles are summarized from the raw sender values for quick conversation-level context.
         participant_roles = tuple(
             sorted(
                 {
@@ -83,6 +89,7 @@ def extract_claude_records(
             )
         )
 
+        # Message order follows the export's chat_messages sequence for deterministic reruns.
         for sequence_index, raw_message in enumerate(raw_messages):
             if not isinstance(raw_message, dict):
                 continue
@@ -98,6 +105,7 @@ def extract_claude_records(
     return conversations, messages
 
 
+# Map one Claude message into the shared canonical schema.
 def _map_claude_message(
     raw_message: dict[str, object],
     *,
@@ -128,6 +136,7 @@ def _map_claude_message(
         sender=_string_or_none(raw_message.get("sender")),
         created_at=normalize_timestamp(raw_message.get("created_at")),
         updated_at=normalize_timestamp(raw_message.get("updated_at")),
+        # The plain-text field is derived from canonical blocks rather than trusted as source truth.
         text=derive_text_from_blocks(content_blocks),
         content_blocks=content_blocks,
         attachments=attachment_refs,
@@ -141,6 +150,7 @@ def _map_claude_message(
     )
 
 
+# Normalize Claude block content while preserving any text, timing, and citations that exist.
 def _map_content_blocks(raw_content: object) -> tuple[ContentBlock, ...]:
     if not isinstance(raw_content, list):
         return ()
@@ -166,6 +176,7 @@ def _map_content_blocks(raw_content: object) -> tuple[ContentBlock, ...]:
     return tuple(blocks)
 
 
+# Convert raw attachment and file lists into reference-only canonical attachments.
 def _map_attachment_refs(raw_message: dict[str, object]) -> tuple[AttachmentReference, ...]:
     refs: list[AttachmentReference] = []
     for key in ("attachments", "files"):
@@ -183,6 +194,7 @@ def _map_attachment_refs(raw_message: dict[str, object]) -> tuple[AttachmentRefe
     return tuple(refs)
 
 
+# Pick the most stable available identifier from a heterogeneous Claude attachment item.
 def _extract_attachment_source_ref(item: object) -> str | None:
     if isinstance(item, str):
         return item
@@ -194,6 +206,7 @@ def _extract_attachment_source_ref(item: object) -> str | None:
     return None
 
 
+# Collect allowlisted content-block flags into message-level source metadata.
 def _collect_flags(raw_content: object) -> tuple[object, ...] | None:
     flags: list[object] = []
     if not isinstance(raw_content, list):
@@ -211,12 +224,14 @@ def _collect_flags(raw_content: object) -> tuple[object, ...] | None:
     return None if not flags else tuple(flags)
 
 
+# Extract the one conversation-level Claude provenance field allowed in phase 1.
 def _extract_account_uuid(account: object) -> str | None:
     if not isinstance(account, dict):
         return None
     return _string_or_none(account.get("uuid"))
 
 
+# Map Claude sender values into canonical author roles while preserving sender separately.
 def _map_sender_to_author_role(sender: object) -> str | None:
     value = _string_or_none(sender)
     if value == "human":
@@ -226,12 +241,14 @@ def _map_sender_to_author_role(sender: object) -> str | None:
     return None
 
 
+# Normalize optional scalar fields to strings where the canonical schema expects them.
 def _string_or_none(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return None
 
 
+# Collapse blank strings so canonical records do not distinguish empty from missing text.
 def _blank_to_none(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -239,6 +256,7 @@ def _blank_to_none(value: object) -> str | None:
     return stripped or None
 
 
+# Derive the Claude bundle root used for source artifact provenance fields.
 def _derive_source_root(conversations_path: Path) -> Path:
     if conversations_path.parent.name:
         return conversations_path.parent

@@ -21,6 +21,11 @@ from src.rag.normalize.identifiers import make_conversation_id, make_message_id
 from src.rag.normalize.timestamps import normalize_timestamp
 
 
+# ChatGPT exports are sharded, so this module treats all conversations-*.json files as one set.
+# Message order is reconstructed from the visible current_node chain only.
+# Branch nodes and null-message nodes are intentionally excluded in phase 1 and documented elsewhere.
+
+# Load the full ChatGPT shard set and map it into canonical conversation and message records.
 def extract_chatgpt_records(
     export_root: Path,
 ) -> tuple[list[CanonicalConversation], list[CanonicalMessage]]:
@@ -35,6 +40,7 @@ def extract_chatgpt_records(
         if not isinstance(payload, list):
             raise ValueError(f"ChatGPT shard must contain a JSON array: {shard_path}")
 
+        # Each shard contributes conversation records, but the export bundle is treated as one logical source.
         source_file = str(shard_path.relative_to(export_root))
         for conversation_ordinal, raw_conversation in enumerate(payload):
             if not isinstance(raw_conversation, dict):
@@ -52,6 +58,7 @@ def extract_chatgpt_records(
     return conversations, messages
 
 
+# Discover and sort the ChatGPT conversation shards for deterministic processing.
 def discover_chatgpt_conversation_shards(export_root: Path) -> list[Path]:
     """Return the sorted conversation shard set for a ChatGPT export bundle."""
     shard_paths = sorted(export_root.glob("conversations-*.json"))
@@ -62,6 +69,7 @@ def discover_chatgpt_conversation_shards(export_root: Path) -> list[Path]:
     return shard_paths
 
 
+# Map one raw ChatGPT conversation plus its visible transcript path.
 def _map_conversation(
     raw_conversation: dict[str, object],
     *,
@@ -83,6 +91,7 @@ def _map_conversation(
     if not isinstance(mapping, dict):
         mapping = {}
 
+    # The visible current_node chain defines phase-1 transcript order for canonical messages.
     visible_nodes = _linearize_visible_conversation(mapping, raw_conversation.get("current_node"))
     canonical_messages = _map_messages(
         visible_nodes,
@@ -90,6 +99,7 @@ def _map_conversation(
         source_file=source_file,
     )
 
+    # Conversation-level summaries are derived from the canonical messages that survive filtering.
     participant_roles = sorted(
         {
             message.author_role
@@ -136,6 +146,7 @@ def _map_conversation(
     return conversation, canonical_messages
 
 
+# Walk from current_node back through parents, then reverse to transcript order.
 def _linearize_visible_conversation(
     mapping: dict[str, object],
     current_node_id: object,
@@ -153,6 +164,7 @@ def _linearize_visible_conversation(
         if not isinstance(raw_node, dict):
             break
         raw_message = raw_node.get("message")
+        # Nodes without message payloads are intentionally excluded from canonical messages.
         if isinstance(raw_message, dict):
             path.append((node_id, raw_node, raw_message))
         parent = raw_node.get("parent")
@@ -162,6 +174,7 @@ def _linearize_visible_conversation(
     return path
 
 
+# Map the visible node chain into canonical messages with stable parent linkage.
 def _map_messages(
     visible_nodes: list[tuple[str, dict[str, object], dict[str, object]]],
     *,
@@ -181,6 +194,7 @@ def _map_messages(
         )
 
         parent_node_id = raw_node.get("parent")
+        # Parent linkage is preserved only across nodes that are included in the visible chain.
         parent_message_id = (
             canonical_ids_by_node.get(parent_node_id)
             if isinstance(parent_node_id, str)
@@ -204,6 +218,7 @@ def _map_messages(
             author_name=_extract_author_name(author),
             created_at=normalize_timestamp(raw_message.get("create_time")),
             updated_at=normalize_timestamp(raw_message.get("update_time")),
+            # The convenience text field is derived from canonical blocks instead of raw parts directly.
             text=derive_text_from_blocks(content_blocks),
             content_blocks=content_blocks,
             attachments=attachments,
@@ -223,6 +238,7 @@ def _map_messages(
     return messages
 
 
+# Convert ChatGPT content parts and attachment metadata into canonical structures.
 def _map_content_and_attachments(
     raw_message: dict[str, object],
 ) -> tuple[tuple[ContentBlock, ...], tuple[AttachmentReference, ...]]:
@@ -256,6 +272,7 @@ def _map_content_and_attachments(
                         _map_part_attachment_refs(part, default_kind=part_type, part_index=part_index)
                     )
 
+    # Metadata attachments are preserved as references only; blobs remain in the raw export bundle.
     if isinstance(raw_metadata, dict):
         raw_attachments = raw_metadata.get("attachments")
         if isinstance(raw_attachments, list):
@@ -273,6 +290,7 @@ def _map_content_and_attachments(
     return tuple(blocks), tuple(attachments)
 
 
+# Convert inline part-level attachment references such as asset pointers into canonical references.
 def _map_part_attachment_refs(
     part: dict[str, object],
     *,
@@ -313,24 +331,28 @@ def _map_part_attachment_refs(
     return refs
 
 
+# Extract the raw author role when it exists on the ChatGPT message author object.
 def _extract_author_role(author: object) -> str | None:
     if not isinstance(author, dict):
         return None
     return _string_or_none(author.get("role"))
 
 
+# Extract a non-blank author name when the export includes one.
 def _extract_author_name(author: object) -> str | None:
     if not isinstance(author, dict):
         return None
     return _blank_to_none(author.get("name"))
 
 
+# Extract the allowlisted message content type from the raw content container.
 def _extract_content_type(content: object) -> str | None:
     if not isinstance(content, dict):
         return None
     return _string_or_none(content.get("content_type"))
 
 
+# Pick the most stable available identifier from a metadata attachment record.
 def _extract_attachment_source_ref(item: object) -> str | None:
     if isinstance(item, str):
         return item
@@ -342,6 +364,7 @@ def _extract_attachment_source_ref(item: object) -> str | None:
     return None
 
 
+# Preserve human-facing attachment names when the export provides them.
 def _extract_attachment_path(item: object) -> str | None:
     if not isinstance(item, dict):
         return None
@@ -352,6 +375,7 @@ def _extract_attachment_path(item: object) -> str | None:
     return None
 
 
+# Strip the file-service prefix so inline asset pointers can be reported as simple references.
 def _asset_pointer_to_path(asset_pointer: str) -> str | None:
     prefix = "file-service://"
     if asset_pointer.startswith(prefix):
@@ -359,12 +383,14 @@ def _asset_pointer_to_path(asset_pointer: str) -> str | None:
     return None
 
 
+# Normalize optional scalar fields to strings where the canonical schema expects them.
 def _string_or_none(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return None
 
 
+# Collapse blank strings so canonical records do not distinguish empty from missing text.
 def _blank_to_none(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -372,6 +398,7 @@ def _blank_to_none(value: object) -> str | None:
     return stripped or None
 
 
+# Preserve only real booleans for the allowlisted conversation metadata fields.
 def _bool_or_none(value: object) -> bool | None:
     if isinstance(value, bool):
         return value

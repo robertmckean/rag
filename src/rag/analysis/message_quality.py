@@ -7,6 +7,11 @@ from collections import Counter
 from pathlib import Path
 
 
+# This analyzer inspects existing normalized messages without changing canonical data.
+# The report focuses on empty, low-signal, and malformed message shapes.
+# Sample records are kept intentionally small so the CLI stays readable on large runs.
+
+# Analyze messages.jsonl and return a deterministic quality summary.
 def analyze_message_quality(messages_path: Path) -> dict[str, object]:
     """Analyze normalized messages.jsonl and return a deterministic summary."""
     messages = _load_messages(messages_path)
@@ -47,6 +52,7 @@ def analyze_message_quality(messages_path: Path) -> dict[str, object]:
         if attachments:
             messages_with_attachments += 1
 
+        # Non-text block tracking helps estimate how much structured content survives normalization.
         if any(_string_or_default(block.get("type"), "") != "text" for block in content_blocks if isinstance(block, dict)):
             messages_with_non_text_content_blocks += 1
 
@@ -88,6 +94,7 @@ def analyze_message_quality(messages_path: Path) -> dict[str, object]:
         no_attachment = not attachments
         text_missing = text is None
 
+        # Empty messages must be empty across text, blocks, and attachments to avoid false positives.
         if text_missing and (not content_blocks or not has_meaningful_block_text) and no_attachment:
             empty_messages.append(message)
             empty_by_provider[provider] += 1
@@ -96,6 +103,7 @@ def analyze_message_quality(messages_path: Path) -> dict[str, object]:
         if text_missing and has_meaningful_block_text:
             null_text_nonempty_blocks.append(message)
 
+        # System and metadata-only messages are useful to count even if they stay in phase-1 output.
         if _is_system_or_metadata_sender(author_role, sender) and not _has_meaningful_content(text, meaningful_block_texts):
             system_metadata_only.append(message)
 
@@ -142,6 +150,7 @@ def analyze_message_quality(messages_path: Path) -> dict[str, object]:
     return report
 
 
+# Write the machine-readable report under the run directory when requested.
 def write_message_quality_report(report: dict[str, object], output_path: Path) -> None:
     """Write the JSON analysis report."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,6 +160,7 @@ def write_message_quality_report(report: dict[str, object], output_path: Path) -
     )
 
 
+# Render the terminal-facing report used by the CLI.
 def render_message_quality_report(report: dict[str, object]) -> str:
     """Render a human-readable report for CLI output."""
     lines: list[str] = []
@@ -209,6 +219,7 @@ def render_message_quality_report(report: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+# Load JSONL messages one object per line and skip blanks defensively.
 def _load_messages(messages_path: Path) -> list[dict[str, object]]:
     messages: list[dict[str, object]] = []
     with messages_path.open("r", encoding="utf-8") as handle:
@@ -222,6 +233,7 @@ def _load_messages(messages_path: Path) -> list[dict[str, object]]:
     return messages
 
 
+# Normalize text values so blank strings collapse to None for downstream checks.
 def _normalize_text(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -229,6 +241,7 @@ def _normalize_text(value: object) -> str | None:
     return stripped or None
 
 
+# Identify roles and senders that likely represent scaffolding rather than dialogue.
 def _is_system_or_metadata_sender(author_role: str, sender: str) -> bool:
     if author_role == "system":
         return True
@@ -237,10 +250,12 @@ def _is_system_or_metadata_sender(author_role: str, sender: str) -> bool:
     return False
 
 
+# Treat either derived text or non-empty block text as meaningful content.
 def _has_meaningful_content(text: str | None, block_texts: list[str]) -> bool:
     return bool(text or block_texts)
 
 
+# Build a stable sample set so repeated reports are easy to compare.
 def _sample_records(messages: list[dict[str, object]], limit: int = 3) -> list[dict[str, str | None]]:
     ordered = sorted(
         (_sample_record(message) for message in messages),
@@ -252,6 +267,7 @@ def _sample_records(messages: list[dict[str, object]], limit: int = 3) -> list[d
     return ordered[:limit]
 
 
+# Build a compact sample record with a short preview for CLI display.
 def _sample_record(message: dict[str, object]) -> dict[str, str | None]:
     preview = _normalize_text(message.get("text"))
     if preview is None:
@@ -271,18 +287,21 @@ def _sample_record(message: dict[str, object]) -> dict[str, str | None]:
     }
 
 
+# Normalize optional scalar values before they are used in counters and samples.
 def _string_or_default(value: object, default: str) -> str:
     if isinstance(value, str):
         return value
     return default
 
 
+# Guard percentage calculation for empty inputs.
 def _percentage(count: int, total: int) -> float:
     if total == 0:
         return 0.0
     return (count / total) * 100.0
 
 
+# Render sample blocks consistently across report sections.
 def _render_samples(samples: list[dict[str, str | None]]) -> list[str]:
     lines = ["  samples:"]
     if not samples:

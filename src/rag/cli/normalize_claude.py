@@ -9,6 +9,11 @@ from src.rag.config import NORMALIZED_RUNS_DIR
 from src.rag.normalize.claude_run import write_claude_normalized_run
 
 
+# This wrapper limits itself to argument parsing and handing control to the run writer.
+# The CLI exists so local runs can target a specific export file and output root.
+# All Claude extraction and manifest behavior remains in the library layer.
+
+# Build the parser for the Claude-only normalization command.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Write a Claude-only normalized run from the raw conversations export."
@@ -34,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Parse CLI arguments, write the run, and print the created run directory.
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     run_dir = write_claude_normalized_run(

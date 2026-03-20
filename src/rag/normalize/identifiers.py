@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 
+# Canonical IDs stay provider-qualified so combined runs cannot collide across sources.
+# Fallback identifiers use stable local keys instead of random values for deterministic reruns.
+# These helpers are intentionally small because every extractor depends on their exact output.
+
+# Build the canonical conversation identifier from provider and source values.
 def make_conversation_id(
     provider: str,
     source_conversation_id: str | None,
@@ -19,6 +24,7 @@ def make_conversation_id(
     return f"{provider}:conversation:missing:{stable_file}:{stable_ordinal}"
 
 
+# Build the canonical message identifier from provider and source values.
 def make_message_id(
     provider: str,
     source_message_id: str | None,

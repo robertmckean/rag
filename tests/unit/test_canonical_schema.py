@@ -12,6 +12,11 @@ from src.rag.normalize.canonical_schema import (
 )
 
 
+# These tests protect the canonical schema shape that JSONL writers serialize.
+# The focus is on authoritative content blocks, derived text, and allowlisted metadata.
+# Keeping the assertions narrow helps catch accidental schema drift quickly.
+
+# Verify that only text blocks contribute to the derived plain-text field.
 def test_derive_text_from_text_blocks_only() -> None:
     blocks = (
         ContentBlock(type="text", text="first"),
@@ -21,6 +26,7 @@ def test_derive_text_from_text_blocks_only() -> None:
     assert derive_text_from_blocks(blocks) == "first\n\nsecond"
 
 
+# Verify that conversation metadata serializes with the expected allowlisted fields.
 def test_conversation_to_dict_preserves_allowlisted_metadata_shape() -> None:
     conversation = CanonicalConversation(
         conversation_id="chatgpt:conversation:abc",
@@ -49,6 +55,7 @@ def test_conversation_to_dict_preserves_allowlisted_metadata_shape() -> None:
     assert "account_uuid" in payload["source_metadata"]
 
 
+# Verify that message serialization preserves nested content blocks and attachment references.
 def test_message_to_dict_preserves_content_blocks_and_attachments() -> None:
     message = CanonicalMessage(
         message_id="claude:message:msg-1",

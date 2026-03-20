@@ -1,5 +1,9 @@
 """Temporary compatibility shim; src.rag.config is the canonical source."""
 
+# This shim keeps older imports working while the canonical config lives under src.rag.
+# It should stay behaviorless and only re-export the public path settings the repo uses.
+# Centralizing the real logic in one module avoids path drift between callers.
+
 from src.rag.config import (
     DATA_DIR,
     DEFAULT_INPUT_PATH,

@@ -6,7 +6,11 @@ from pathlib import Path
 from src.rag.normalize.chatgpt_run import write_chatgpt_normalized_run
 
 
+# These integration tests validate the ChatGPT-only run writer end to end.
+# The fixture bundle exercises shard handling, manifest notes, and canonical JSONL output.
+# Deterministic output matters because graph linearization policy must produce stable reruns.
 class ChatGPTRunIntegrationTests(unittest.TestCase):
+    # Set up an isolated output directory so each test owns its generated artifacts.
     def setUp(self) -> None:
         self.fixture_input = Path("tests/fixtures/chatgpt/sample_export")
         self.output_root = Path("tests/_tmp_chatgpt_runs")
@@ -14,10 +18,12 @@ class ChatGPTRunIntegrationTests(unittest.TestCase):
         if self.output_root.exists():
             shutil.rmtree(self.output_root, ignore_errors=True)
 
+    # Clean up the temporary output directory after each run-writer test.
     def tearDown(self) -> None:
         if self.output_root.exists():
             shutil.rmtree(self.output_root, ignore_errors=True)
 
+    # Verify that the ChatGPT run writer emits expected files, counts, notes, and golden records.
     def test_writes_expected_files_and_golden_records(self) -> None:
         run_dir = write_chatgpt_normalized_run(
             self.fixture_input,
@@ -57,6 +63,7 @@ class ChatGPTRunIntegrationTests(unittest.TestCase):
         self.assertEqual(first_message["parent_message_id"], None)
         self.assertEqual(first_message["content_blocks"][0]["type"], "text")
 
+    # Verify that rerunning the same input with the same run metadata is byte-stable.
     def test_output_is_deterministic_for_same_input(self) -> None:
         first_dir = write_chatgpt_normalized_run(
             self.fixture_input,

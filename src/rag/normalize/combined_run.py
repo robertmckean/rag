@@ -12,6 +12,11 @@ from src.rag.normalize.claude import extract_claude_records
 from src.rag.storage.jsonl_writer import write_jsonl
 
 
+# This module composes the provider-specific extractors into one shared run.
+# Deterministic sorting is applied before writing so mixed-provider output is stable.
+# The manifest is the single place where shared and provider-specific policies are summarized.
+
+# Extract both providers and write one combined normalized run directory.
 def write_combined_normalized_run(
     *,
     chatgpt_export_root: Path,
@@ -24,6 +29,7 @@ def write_combined_normalized_run(
     chatgpt_conversations, chatgpt_messages = extract_chatgpt_records(chatgpt_export_root)
     claude_conversations, claude_messages = extract_claude_records(claude_conversations_path)
 
+    # Sorting fixes record order across reruns even when providers are processed independently.
     all_conversations = sorted(
         [*chatgpt_conversations, *claude_conversations],
         key=_conversation_sort_key,
@@ -42,6 +48,7 @@ def write_combined_normalized_run(
     messages_output = run_dir / "messages.jsonl"
     manifest_output = run_dir / "manifest.json"
 
+    # One conversations file and one messages file keep the combined run easy to inspect and diff.
     write_jsonl(conversations_output, [record.to_dict() for record in all_conversations])
     write_jsonl(messages_output, [record.to_dict() for record in all_messages])
 
@@ -56,6 +63,7 @@ def write_combined_normalized_run(
         },
     }
 
+    # Provider policy notes are carried into the manifest so downstream consumers can reason about limits.
     manifest = {
         "run_id": resolved_run_id,
         "created_at": resolved_created_at,
@@ -104,10 +112,12 @@ def write_combined_normalized_run(
     return run_dir
 
 
+# Sort conversations deterministically before writing the combined JSONL file.
 def _conversation_sort_key(record: CanonicalConversation) -> tuple[str, str]:
     return (record.provider, record.conversation_id)
 
 
+# Sort messages by provider, conversation, sequence, and id for deterministic combined output.
 def _message_sort_key(record: CanonicalMessage) -> tuple[str, str, int, str]:
     return (
         record.provider,
@@ -117,9 +127,11 @@ def _message_sort_key(record: CanonicalMessage) -> tuple[str, str, int, str]:
     )
 
 
+# Generate a timestamp-based run id when one is not provided explicitly.
 def _default_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+# Generate the manifest timestamp in the canonical UTC format.
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

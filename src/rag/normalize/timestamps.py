@@ -5,6 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 
+# Providers emit timestamps in different shapes, so this module normalizes them centrally.
+# The output format is always UTC ISO-8601 with a trailing `Z` for canonical records.
+# Unsupported or blank values collapse to None instead of inventing placeholder timestamps.
+
+# Normalize provider timestamps into the canonical UTC string format.
 def normalize_timestamp(value: object) -> str | None:
     """Normalize source timestamps to UTC ISO-8601 with trailing Z."""
     if value is None:
@@ -40,5 +45,6 @@ def normalize_timestamp(value: object) -> str | None:
     return None
 
 
+# Format normalized datetimes in the single canonical representation used across the repo.
 def _format_datetime(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")

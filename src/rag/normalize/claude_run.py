@@ -10,6 +10,11 @@ from src.rag.normalize.claude import extract_claude_records
 from src.rag.storage.jsonl_writer import write_jsonl
 
 
+# This writer owns only output layout and manifest generation for Claude-only runs.
+# Extraction stays in the provider module so behavior changes do not leak into the CLI layer.
+# Each run writes into its own directory to keep outputs immutable and easy to diff.
+
+# Extract Claude records and write one normalized run directory.
 def write_claude_normalized_run(
     conversations_path: Path,
     output_root: Path,
@@ -29,9 +34,11 @@ def write_claude_normalized_run(
     messages_output = run_dir / "messages.jsonl"
     manifest_output = run_dir / "manifest.json"
 
+    # Conversations and messages are written separately so downstream tooling can choose its retrieval unit.
     write_jsonl(conversations_output, [record.to_dict() for record in canonical_conversations])
     write_jsonl(messages_output, [record.to_dict() for record in canonical_messages])
 
+    # The manifest captures counts and documented exclusions for this specific run.
     manifest = {
         "run_id": resolved_run_id,
         "created_at": resolved_created_at,
@@ -53,9 +60,11 @@ def write_claude_normalized_run(
     return run_dir
 
 
+# Generate a timestamp-based run id when one is not provided explicitly.
 def _default_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+# Generate the manifest timestamp in the canonical UTC format.
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

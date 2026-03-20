@@ -9,6 +9,11 @@ from src.rag.config import NORMALIZED_RUNS_DIR
 from src.rag.normalize.combined_run import write_combined_normalized_run
 
 
+# This CLI coordinates one combined run without duplicating provider extraction logic.
+# Argument parsing is kept minimal so orchestration behavior stays in the run writer.
+# Printing the final run directory gives callers one stable location to inspect afterward.
+
+# Build the parser for the combined normalization command.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Write a combined ChatGPT and Claude normalized run."
@@ -40,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Parse CLI arguments, write the combined run, and print the created run directory.
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     run_dir = write_combined_normalized_run(

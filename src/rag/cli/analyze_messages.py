@@ -12,6 +12,11 @@ from src.rag.analysis.message_quality import (
 )
 
 
+# This CLI consumes an existing normalized run and never mutates messages.jsonl itself.
+# Human-readable output goes to stdout, while the JSON report is optional and explicit.
+# The wrapper stays thin so quality logic remains testable inside the analysis module.
+
+# Build the parser for the message quality analysis command.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Analyze normalized messages.jsonl for empty and low-signal records."
@@ -30,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Parse arguments, run the analysis, and optionally persist the JSON report.
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     run_dir = args.run_dir.resolve()
