@@ -1,0 +1,81 @@
+"""CLI for deterministic grounded answers over one normalized run."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from rag.answering.answer import ANSWER_RETRIEVAL_MODES, answer_query, answer_result_json, render_answer_result
+
+
+# The answer CLI is a review surface for grounded answers rather than a chat interface.
+# Retrieval stays authoritative for evidence collection, and the answer layer only summarizes bounded evidence.
+# JSON output is first-class so the same result object can be inspected in tests and scripts.
+
+
+# Build the parser for the grounded answer CLI.
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Generate a deterministic grounded answer from one normalized run.")
+    parser.add_argument("--run-dir", type=Path, required=True, help="Path to one normalized run directory.")
+    parser.add_argument("--query", type=str, required=True, help="Natural-language question to answer.")
+    parser.add_argument(
+        "--retrieval-mode",
+        choices=ANSWER_RETRIEVAL_MODES,
+        default="relevance",
+        help="Retrieval ordering mode used to gather evidence.",
+    )
+    parser.add_argument("--limit", type=int, default=8, help="Maximum number of retrieval results to inspect.")
+    parser.add_argument("--max-evidence", type=int, default=5, help="Maximum number of evidence items to keep.")
+    parser.add_argument("--json", action="store_true", help="Print the answer result as structured JSON.")
+    parser.add_argument("--json-out", type=Path, default=None, help="Optional path for structured JSON output.")
+    return parser
+
+
+# Parse arguments, generate a grounded answer, print it, and optionally write JSON to disk.
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        result = answer_query(
+            args.run_dir.resolve(),
+            args.query,
+            retrieval_mode=args.retrieval_mode,
+            limit=args.limit,
+            max_evidence=args.max_evidence,
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        _safe_print_error(f"error: {exc}")
+        return 2
+
+    json_payload = answer_result_json(result)
+    if args.json:
+        _safe_print(json_payload.rstrip())
+    else:
+        _safe_print(render_answer_result(result))
+
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(json_payload, encoding="utf-8")
+        if not args.json:
+            _safe_print("")
+            _safe_print(f"json_out: {args.json_out.resolve()}")
+
+    return 0
+
+
+# Print terminal output with replacement fallback for consoles that cannot encode some evidence text.
+def _safe_print(value: str) -> None:
+    encoding = sys.stdout.encoding or "utf-8"
+    safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    print(safe_value)
+
+
+# Print CLI errors to stderr with the same encoding fallback used for normal output.
+def _safe_print_error(value: str) -> None:
+    encoding = sys.stderr.encoding or "utf-8"
+    safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    print(safe_value, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

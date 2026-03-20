@@ -6,15 +6,18 @@ this repository.
 ## Project Goal
 
 Build a personal RAG system over exported ChatGPT and Claude histories. The
-current codebase ingests raw exports into canonical normalized records and now
-adds a local, inspectable lexical retrieval layer over those normalized runs.
+current codebase ingests raw exports into canonical normalized records, adds a
+local lexical retrieval layer, and now supports deterministic grounded answers
+plus deterministic answer evaluation over a single normalized run.
 
 ## Project Status
 
-- Active milestone: Phase 2 retrieval stabilization and iteration
+- Active milestone: Phase 3A grounded answers and deterministic evaluation
 - Phase 1 normalization is complete and its output contract is frozen
 - Phase 2 currently supports BM25 lexical retrieval, contextual window results,
   timeline exploration, query normalization, and chronological retrieval modes
+- Phase 3A currently supports deterministic grounded answers, answer-status
+  classification, citation assembly, and a benchmark eval harness
 - Prefer the current code in `src/rag/` and the run artifacts under
   `data/normalized/runs/` over older notes or ad hoc local files
 
@@ -33,8 +36,13 @@ adds a local, inspectable lexical retrieval layer over those normalized runs.
   Phase 1 normalization, provider extraction, and run writing
 - `src/rag/retrieval/`
   Phase 2 retrieval read model and lexical ranking logic
+- `src/rag/answering/`
+  Phase 3A grounded answer models and deterministic answer pipeline
+- `src/rag/eval/`
+  deterministic benchmark metrics and eval runner for grounded answers
 - `src/rag/cli/`
-  CLI entry points for inspection, normalization, analysis, and retrieval
+  CLI entry points for inspection, normalization, analysis, retrieval, answers,
+  and evals
 - `data/raw/`
   immutable provider export inputs
 - `data/normalized/runs/`
@@ -53,9 +61,10 @@ adds a local, inspectable lexical retrieval layer over those normalized runs.
 - Do not change Phase 1 output fields or artifact layout unless the user
   explicitly approves a contract change
 - Phase 2 works against existing normalized artifacts only
-- Current Phase 2 non-goals:
-  embeddings, vector DBs, UI, answer generation, cross-run retrieval, and
-  semantic ranking beyond explicit lexical improvements
+- Phase 3A builds on Phase 2 retrieval without changing retrieval semantics
+- Current non-goals:
+  embeddings, vector DBs, UI, cross-run retrieval, semantic ranking beyond
+  lexical improvements, chatbot behavior, and LLM-backed answer generation
 
 ## Working Style
 
@@ -65,15 +74,21 @@ adds a local, inspectable lexical retrieval layer over those normalized runs.
   explicitly requires it
 - Keep retrieval changes local to `src/rag/retrieval/` and `src/rag/cli/`
   unless shared code truly needs adjustment
+- Keep answer/eval changes local to `src/rag/answering/`, `src/rag/eval/`,
+  and `src/rag/cli/` unless shared code truly needs adjustment
 - When adding retrieval behavior, preserve inspectability:
   scoring details, ordering basis, and provenance should remain obvious
+- When adding grounded-answer behavior, preserve deterministic evidence
+  qualification, explicit status rules, and citation traceability
 
 ## Validation
 
 - After retrieval changes, run the smallest useful retrieval tests first
+- After grounded-answer or eval changes, run focused answer/eval tests first
 - If the change touches shared behavior, run the broader unittest suite after
   the focused checks
 - Prefer explicit CLI smoke tests for user-facing retrieval behavior
+- Prefer explicit CLI smoke tests for user-facing answer/eval behavior
 - If a command depends on package resolution, run it in the intended local
   environment and set `PYTHONPATH=src` when needed
 
@@ -87,6 +102,7 @@ adds a local, inspectable lexical retrieval layer over those normalized runs.
 ## Documentation And Comments
 
 - Keep `docs/phase-2-retrieval-objectives.md` aligned with implemented retrieval behavior
+- Keep Phase 3A answer/eval docs aligned with the current deterministic answer contract
 - Update documentation when behavior changes become user-visible
 - Add comments where retrieval flow, ranking logic, chronology rules, or
   provenance handling would otherwise be ambiguous
@@ -97,5 +113,7 @@ adds a local, inspectable lexical retrieval layer over those normalized runs.
 - Protect the Phase 1 normalization contract
 - Catch retrieval regressions in ranking order, chronology handling, filters,
   provenance, and CLI behavior
+- Catch answer/eval regressions in evidence qualification, status assignment,
+  citation integrity, and deterministic reporting
 - Prioritize deterministic behavior, readable failure modes, and stale repo
   guidance over stylistic cleanup

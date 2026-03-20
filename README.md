@@ -126,3 +126,45 @@ raise SystemExit(main([
 
 Timeline mode returns compact chronological focal-message entries across conversations.
 The other retrieval modes return contextual message windows.
+
+## Phase 3A Grounded Answers
+
+Current grounded-answer capabilities:
+- deterministic answer generation over a single normalized run
+- explicit answer status:
+  - `supported`
+  - `partially_supported`
+  - `ambiguous`
+  - `insufficient_evidence`
+- bounded evidence selection and citation assembly
+- deterministic answer evaluation against a benchmark query bank
+
+Grounded answer CLI:
+```powershell
+$env:PYTHONPATH='src'; @'
+from rag.cli.answer import main
+raise SystemExit(main([
+  '--run-dir', 'data/normalized/runs/<run_id>',
+  '--query', 'What have I said about burnout?',
+  '--retrieval-mode', 'relevance',
+  '--limit', '8',
+  '--max-evidence', '5'
+]))
+'@ | python -
+```
+
+Eval CLI:
+```powershell
+$env:PYTHONPATH='src'; @'
+from rag.cli.eval import main
+raise SystemExit(main([
+  '--run-dir', 'data/normalized/runs/<run_id>',
+  '--bench', 'tests/fixtures/eval/query_bank.json'
+]))
+'@ | python -
+```
+
+Grounded-answer constraints:
+- retrieval remains the source of available evidence
+- answer generation is deterministic and template-based
+- no LLM calls, embeddings, vector DBs, or cross-run federation in this phase

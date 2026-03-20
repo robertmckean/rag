@@ -1,0 +1,27 @@
+{
+  "run_id": "answer-sample-run",
+  "created_at": "2026-03-20T00:00:00Z",
+  "providers_present": [
+    "chatgpt",
+    "claude"
+  ],
+  "source_roots": {
+    "chatgpt": "tests/fixtures/answering/sample_run",
+    "claude": "tests/fixtures/answering/sample_run"
+  },
+  "conversation_count": 3,
+  "message_count": 8,
+  "counts_by_provider": {
+    "chatgpt": {
+      "conversation_count": 2,
+      "message_count": 5
+    },
+    "claude": {
+      "conversation_count": 1,
+      "message_count": 3
+    }
+  },
+  "notes": [
+    "Fixture run for deterministic grounded-answer tests."
+  ]
+}

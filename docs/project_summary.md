@@ -4,11 +4,13 @@ Personal RAG system built from exported ChatGPT and Claude histories.
 
 ## Current Scope
 
-The repository has two active layers:
+The repository now has three active layers:
 - Phase 1 normalization:
   raw export inspection, canonical conversation/message schema, provider-specific extraction, deterministic JSONL outputs, and immutable run manifests
 - Phase 2 retrieval:
   local lexical retrieval over one normalized run using BM25 scoring, contextual message windows, chronological retrieval modes, and timeline exploration
+- Phase 3A grounded answers:
+  deterministic answer generation, explicit answer status, citation assembly, and deterministic benchmark evaluation
 
 ## Source Of Truth
 
@@ -39,6 +41,19 @@ other modes return contextual message windows around focal matches.
 - embeddings
 - vector databases
 - UI implementation
-- answer-generation layer
 - cross-run retrieval
 - semantic search beyond the current lexical retrieval layer
+- LLM-backed answer generation
+- autonomous follow-up questions
+- answer verification loops
+
+## Current Answering/Eval Scope
+
+- `rag.cli.answer` produces deterministic grounded answers for a single run
+- answer statuses are:
+  - `supported`
+  - `partially_supported`
+  - `ambiguous`
+  - `insufficient_evidence`
+- `rag.cli.eval` runs a benchmark query bank against the real answer pipeline
+- eval output reports status accuracy, failure types, and per-case results

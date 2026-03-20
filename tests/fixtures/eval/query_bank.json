@@ -1,0 +1,116 @@
+[
+  {
+    "id": "supported_burnout_late_2025",
+    "query": "What have I said about burnout late 2025?",
+    "retrieval_mode": "relevance",
+    "expected_status": "supported",
+    "expected_terms_any": [
+      "burnout"
+    ],
+    "expected_terms_all": [
+      "burnout",
+      "late",
+      "2025"
+    ],
+    "forbidden_terms": [],
+    "expected_min_citations": 1,
+    "expected_max_citations": 2,
+    "notes": "Clean supported combined-concept case."
+  },
+  {
+    "id": "insufficient_marathon_training",
+    "query": "What have I said about marathon training?",
+    "retrieval_mode": "relevance",
+    "expected_status": "insufficient_evidence",
+    "expected_terms_any": [],
+    "expected_terms_all": [],
+    "forbidden_terms": [],
+    "expected_min_citations": 0,
+    "expected_max_citations": 0,
+    "notes": "No meaningful support should remain."
+  },
+  {
+    "id": "partial_burnout_causes",
+    "query": "What have I said about burnout causes?",
+    "retrieval_mode": "relevance",
+    "expected_status": "partially_supported",
+    "expected_terms_any": [
+      "burnout"
+    ],
+    "expected_terms_all": [],
+    "forbidden_terms": [],
+    "expected_min_citations": 1,
+    "expected_max_citations": 2,
+    "notes": "Only one meaningful part is grounded."
+  },
+  {
+    "id": "ambiguous_workload",
+    "query": "What have I said about workload?",
+    "retrieval_mode": "relevance",
+    "expected_status": "ambiguous",
+    "expected_terms_any": [
+      "workload"
+    ],
+    "expected_terms_all": [],
+    "forbidden_terms": [],
+    "expected_min_citations": 2,
+    "expected_max_citations": 2,
+    "notes": "Conflicting workload evidence should remain ambiguous."
+  },
+  {
+    "id": "entity_noise_mecky_daughter",
+    "query": "What have I said about Mecky's daughter?",
+    "retrieval_mode": "relevance",
+    "expected_status": "insufficient_evidence",
+    "expected_terms_any": [],
+    "expected_terms_all": [],
+    "forbidden_terms": [],
+    "expected_min_citations": 0,
+    "expected_max_citations": 0,
+    "notes": "Entity-specific query should not be supported by adjacent noise."
+  },
+  {
+    "id": "partial_burnout_motivation_causes",
+    "query": "What have I said about burnout motivation causes?",
+    "retrieval_mode": "relevance",
+    "expected_status": "partially_supported",
+    "expected_terms_any": [
+      "burnout",
+      "motivation"
+    ],
+    "expected_terms_all": [],
+    "forbidden_terms": [],
+    "expected_min_citations": 1,
+    "expected_max_citations": 2,
+    "notes": "Motivation is grounded, causes is not."
+  },
+  {
+    "id": "multipart_not_supported",
+    "query": "What have I said about burnout motivation late 2025?",
+    "retrieval_mode": "relevance",
+    "expected_status": "partially_supported",
+    "expected_terms_any": [
+      "burnout",
+      "2025"
+    ],
+    "expected_terms_all": [],
+    "forbidden_terms": [],
+    "expected_min_citations": 1,
+    "expected_max_citations": 2,
+    "notes": "Combined support is incomplete, so supported would overclaim."
+  },
+  {
+    "id": "citation_count_sanity_newest",
+    "query": "What have I said about burnout?",
+    "retrieval_mode": "newest",
+    "expected_status": "supported",
+    "expected_terms_any": [
+      "burnout"
+    ],
+    "expected_terms_all": [],
+    "forbidden_terms": [],
+    "expected_min_citations": 1,
+    "expected_max_citations": 2,
+    "notes": "Citation count should stay within the bounded evidence cap."
+  }
+]
