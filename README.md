@@ -111,6 +111,25 @@ Current retrieval capabilities:
 - query normalization with quoted-phrase support
 - timeline exploration across conversations within one normalized run
 
+Current retrieval boundary:
+- retrieval is still lexical only
+- BM25 is the active retrieval method
+- there is no embedding or semantic retrieval channel in this version
+
+Known lexical limitation:
+- vocabulary mismatch can fail even when the topic is relevant
+- real example:
+  - query: `What have I said about Larry's guitar playing?`
+  - retrieved run evidence includes Larry plus `playing the bass`
+  - qualification correctly remains `insufficient_evidence` because `guitar`
+    is not grounded in the retrieved evidence
+- see `docs/known_limitations.md`
+
+Next retrieval milestone:
+- keep BM25 as the baseline lexical channel
+- add embeddings as a second retrieval channel
+- use this pure-BM25 release as the regression baseline for hybrid retrieval
+
 Retrieval CLI:
 ```powershell
 $env:PYTHONPATH='src'; @'
@@ -173,3 +192,8 @@ Grounded-answer constraints:
 - answer generation is deterministic and template-based
 - conversational-memory composition is opt-in and stays within one retrieved window
 - no LLM calls, embeddings, vector DBs, or cross-run federation in this phase
+
+Current release status:
+- retrieval plus grounding is stable and testable end to end
+- Phase 3 grounded answering is functionally complete on top of the current
+  pure-BM25 retrieval layer

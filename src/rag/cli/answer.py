@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from rag.answering.answer import (
     GROUNDING_MODES,
     answer_query,
     answer_result_json,
+    qualification_debug_payload,
+    render_qualification_debug,
     render_answer_result,
 )
 
@@ -41,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-evidence", type=int, default=5, help="Maximum number of evidence items to keep.")
     parser.add_argument("--llm", action="store_true", help="Enable constrained LLM-backed answer synthesis.")
     parser.add_argument("--llm-model", type=str, default=None, help="Optional OpenAI model override for --llm mode.")
+    parser.add_argument("--debug-qualification", action="store_true", help="Print detailed evidence-qualification diagnostics.")
     parser.add_argument("--json", action="store_true", help="Print the answer result as structured JSON.")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional path for structured JSON output.")
     return parser
@@ -64,15 +68,52 @@ def main(argv: list[str] | None = None) -> int:
         _safe_print_error(f"error: {exc}")
         return 2
 
+    debug_payload = None
+    if args.debug_qualification:
+        try:
+            debug_payload = qualification_debug_payload(
+                args.run_dir.resolve(),
+                args.query,
+                retrieval_mode=args.retrieval_mode,
+                grounding_mode=args.grounding_mode,
+                limit=args.limit,
+                max_evidence=args.max_evidence,
+            )
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            _safe_print_error(f"error: {exc}")
+            return 2
+
     json_payload = answer_result_json(result)
     if args.json:
-        _safe_print(json_payload.rstrip())
+        if debug_payload is None:
+            _safe_print(json_payload.rstrip())
+        else:
+            combined_payload = {
+                "answer_result": result.to_dict(),
+                "qualification_debug": debug_payload,
+            }
+            _safe_print(json.dumps(combined_payload, ensure_ascii=True, indent=2, sort_keys=True))
     else:
         _safe_print(render_answer_result(result))
+        if debug_payload is not None:
+            _safe_print("")
+            _safe_print(render_qualification_debug(debug_payload))
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json_payload, encoding="utf-8")
+        if debug_payload is None:
+            args.json_out.write_text(json_payload, encoding="utf-8")
+        else:
+            combined_payload = json.dumps(
+                {
+                    "answer_result": result.to_dict(),
+                    "qualification_debug": debug_payload,
+                },
+                ensure_ascii=True,
+                indent=2,
+                sort_keys=True,
+            )
+            args.json_out.write_text(combined_payload + "\n", encoding="utf-8")
         if not args.json:
             _safe_print("")
             _safe_print(f"json_out: {args.json_out.resolve()}")

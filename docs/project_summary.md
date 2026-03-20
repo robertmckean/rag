@@ -14,6 +14,23 @@ The repository now has three active layers:
   deterministic benchmark evaluation, and an opt-in `conversational_memory`
   grounding mode for same-window local evidence composition
 
+## Release Baseline
+
+The current release line is the last pure-BM25 retrieval baseline before hybrid
+retrieval work.
+
+- active retrieval method: BM25 lexical retrieval
+- answering/grounding: stable and deterministic on top of retrieval
+- next planned retrieval step: hybrid BM25 + embeddings
+
+Known example of the current lexical boundary:
+- query: `What have I said about Larry's guitar playing?`
+- real retrieved evidence mentions Larry and `playing the bass`
+- lexical grounding correctly remains insufficient because `guitar` is not
+  present in the retrieved evidence
+
+See `docs/known_limitations.md` for the documented failure mode.
+
 ## Source Of Truth
 
 Normalized outputs are immutable per run under:
@@ -48,6 +65,9 @@ other modes return contextual message windows around focal matches.
 - LLM-backed answer generation
 - autonomous follow-up questions
 - answer verification loops
+
+Near-term next step after this baseline:
+- introduce embeddings as a second retrieval channel without removing BM25
 
 ## Current Answering/Eval Scope
 

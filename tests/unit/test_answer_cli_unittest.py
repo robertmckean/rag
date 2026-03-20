@@ -88,6 +88,23 @@ class AnswerCliTests(unittest.TestCase):
         self.assertIn("answer_status: ambiguous", stdout_value)
         self.assertIn("citations:", stdout_value)
 
+    # Verify that qualification diagnostics are printed when the debug flag is enabled.
+    def test_answer_cli_prints_debug_qualification_output(self) -> None:
+        exit_code, stdout_value, stderr_value = self._run_cli(
+            "--run-dir",
+            str(self.run_dir),
+            "--query",
+            "What have I said about burnout?",
+            "--debug-qualification",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr_value, "")
+        self.assertIn("Qualification Debug", stdout_value)
+        self.assertIn("parsed_query_terms:", stdout_value)
+        self.assertIn("retrieved_candidate_count:", stdout_value)
+        self.assertIn("candidate:", stdout_value)
+
     # Verify that the CLI wires --llm, --llm-model, and --grounding-mode through to the answer pipeline.
     def test_answer_cli_wires_llm_and_grounding_flags(self) -> None:
         with patch("rag.cli.answer.answer_query") as mocked_answer_query:
@@ -148,6 +165,24 @@ class AnswerCliTests(unittest.TestCase):
         self.assertTrue(mocked_answer_query.call_args.kwargs["llm"])
         self.assertEqual(mocked_answer_query.call_args.kwargs["llm_model"], "gpt-5-mini")
         self.assertEqual(mocked_answer_query.call_args.kwargs["grounding_mode"], "conversational_memory")
+
+    # Verify that debug qualification JSON output includes both the answer result and debug payload.
+    def test_answer_cli_debug_json_output_includes_qualification_payload(self) -> None:
+        exit_code, stdout_value, stderr_value = self._run_cli(
+            "--run-dir",
+            str(self.run_dir),
+            "--query",
+            "What have I said about burnout?",
+            "--json",
+            "--debug-qualification",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr_value, "")
+        payload = json.loads(stdout_value)
+        self.assertIn("answer_result", payload)
+        self.assertIn("qualification_debug", payload)
+        self.assertIn("windows", payload["qualification_debug"])
 
 
 if __name__ == "__main__":

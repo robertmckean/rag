@@ -81,6 +81,23 @@ class _QualificationOutcome:
     status_reason: str | None
 
 
+@dataclass(frozen=True)
+class _WindowQualificationDebug:
+    candidate_rank: int
+    conversation_id: str
+    focal_message_id: str | None
+    window_id: str | None
+    strict_qualification_passed: bool
+    conversational_memory_qualification_passed: bool
+    contributing_items: tuple[EvidenceItem, ...]
+    coverage_terms: tuple[str, ...]
+    coverage_ratio: float
+    user_excerpt_count: int
+    assistant_excerpt_count: int
+    user_authored_coverage_met_threshold: bool
+    failure_reasons: tuple[str, ...]
+
+
 # Answer one natural-language query against a single normalized run using existing retrieval behavior.
 def answer_query(
     run_dir: Path,
@@ -199,6 +216,116 @@ def render_answer_result(result: AnswerResult) -> str:
 # Serialize one answer result deterministically for JSON output or tests.
 def answer_result_json(result: AnswerResult) -> str:
     return json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+
+
+# Build a structured qualification-debug payload without changing the normal answer contract.
+def qualification_debug_payload(
+    run_dir: Path,
+    query: str,
+    *,
+    retrieval_mode: str = "relevance",
+    grounding_mode: str = DEFAULT_GROUNDING_MODE,
+    limit: int = 8,
+    max_evidence: int = DEFAULT_EVIDENCE_CAP,
+    filters: RetrievalFilters | None = None,
+) -> dict[str, object]:
+    parsed_query = parse_query(query)
+    focus_terms = _focus_terms(query)
+    retrieval_results = retrieve_message_windows(
+        run_dir.resolve(),
+        query,
+        limit=limit,
+        mode=retrieval_mode,
+        filters=filters,
+    )
+    selected_evidence = _select_evidence(retrieval_results, query, max_evidence=max_evidence)
+    qualification = _qualify_evidence_items(query, selected_evidence, grounding_mode=grounding_mode)
+    window_debug = _build_window_debug_rows(
+        retrieval_results,
+        selected_evidence,
+        focus_terms,
+    )
+    return {
+        "query": query,
+        "parsed_query_terms": list(parsed_query.normalized_query_terms),
+        "scoring_terms": list(focus_terms),
+        "grounding_mode": grounding_mode,
+        "conversational_memory_threshold": COMPOSED_SUPPORT_COVERAGE_THRESHOLD,
+        "retrieved_candidate_count": len(retrieval_results),
+        "evidence_qualified_candidate_count": len(qualification.evidence_items),
+        "windows": [
+            {
+                "candidate_rank": row.candidate_rank,
+                "conversation_id": row.conversation_id,
+                "focal_message_id": row.focal_message_id,
+                "window_id": row.window_id,
+                "strict_qualification_passed": row.strict_qualification_passed,
+                "conversational_memory_qualification_passed": row.conversational_memory_qualification_passed,
+                "contributing_items": [
+                    {
+                        "message_id": item.citation.message_id,
+                        "author_role": item.author_role,
+                        "matched_scoring_terms": list(item.matched_terms),
+                        "excerpt": item.citation.excerpt,
+                    }
+                    for item in row.contributing_items
+                ],
+                "union_coverage_terms": list(row.coverage_terms),
+                "coverage_ratio": row.coverage_ratio,
+                "contributing_excerpt_count": len(row.contributing_items),
+                "user_excerpt_count": row.user_excerpt_count,
+                "assistant_excerpt_count": row.assistant_excerpt_count,
+                "user_authored_coverage_met_threshold": row.user_authored_coverage_met_threshold,
+                "failure_reasons": list(row.failure_reasons),
+            }
+            for row in window_debug
+        ],
+    }
+
+
+# Render a human-readable qualification-debug report for CLI inspection.
+def render_qualification_debug(payload: dict[str, object]) -> str:
+    lines = [
+        "Qualification Debug",
+        f"parsed_query_terms: {payload['parsed_query_terms']}",
+        f"scoring_terms: {payload['scoring_terms']}",
+        f"grounding_mode: {payload['grounding_mode']}",
+        f"conversational_memory_threshold: {payload['conversational_memory_threshold']}",
+        f"retrieved_candidate_count: {payload['retrieved_candidate_count']}",
+        f"evidence_qualified_candidate_count: {payload['evidence_qualified_candidate_count']}",
+    ]
+    windows = payload.get("windows", [])
+    if isinstance(windows, list):
+        for row in windows:
+            lines.append("")
+            lines.append(
+                "candidate: "
+                f"rank={row['candidate_rank']} "
+                f"conversation_id={row['conversation_id']} "
+                f"focal_message_id={row['focal_message_id']} "
+                f"window_id={row['window_id']}"
+            )
+            lines.append(f"  strict_qualification_passed: {row['strict_qualification_passed']}")
+            lines.append(f"  conversational_memory_qualification_passed: {row['conversational_memory_qualification_passed']}")
+            lines.append(f"  union_coverage_terms: {row['union_coverage_terms']}")
+            lines.append(f"  coverage_ratio: {row['coverage_ratio']}")
+            lines.append(f"  contributing_excerpt_count: {row['contributing_excerpt_count']}")
+            lines.append(f"  user_excerpt_count: {row['user_excerpt_count']}")
+            lines.append(f"  assistant_excerpt_count: {row['assistant_excerpt_count']}")
+            lines.append(f"  user_authored_coverage_met_threshold: {row['user_authored_coverage_met_threshold']}")
+            lines.append(f"  failure_reasons: {row['failure_reasons']}")
+            contributing_items = row.get("contributing_items", [])
+            if contributing_items:
+                lines.append("  contributing_items:")
+                for item in contributing_items:
+                    lines.append(
+                        "    - "
+                        f"message_id={item['message_id']} "
+                        f"author_role={item['author_role']} "
+                        f"matched_scoring_terms={item['matched_scoring_terms']} "
+                        f"excerpt={item['excerpt']}"
+                    )
+    return "\n".join(lines)
 
 
 # Optionally rewrite the deterministic answer text with constrained LLM synthesis after Phase 3A is complete.
@@ -661,25 +788,15 @@ def _qualify_window_composed_support(
     )
     for window_key in sorted_window_keys:
         window_items = tuple(grouped_items[window_key])
-        contributors = tuple(item for item in window_items if _is_window_contributing_item(item))
-        if len(contributors) < 2:
-            continue
-        coverage_terms = tuple(sorted({term for item in contributors for term in item.matched_terms}))
-        coverage_ratio = _coverage_ratio(coverage_terms, focus_terms)
-        user_contributors = tuple(item for item in contributors if item.author_role == "user")
-        user_excerpt_count = len(user_contributors)
-        user_coverage_terms = tuple(sorted({term for item in user_contributors for term in item.matched_terms}))
-        user_coverage_ratio = _coverage_ratio(user_coverage_terms, focus_terms)
-        if coverage_ratio < COMPOSED_SUPPORT_COVERAGE_THRESHOLD or user_excerpt_count < 1:
-            continue
-        if user_coverage_ratio < COMPOSED_SUPPORT_COVERAGE_THRESHOLD:
+        analysis = _analyze_window_composition(window_items, focus_terms)
+        if not analysis.conversational_memory_qualification_passed:
             continue
         return _qualification_outcome_from_items(
-            _re_rank_evidence_items(contributors),
+            _re_rank_evidence_items(analysis.contributing_items),
             support_basis="window_composed",
             composition_used=True,
-            coverage_terms=coverage_terms,
-            coverage_ratio=coverage_ratio,
+            coverage_terms=analysis.coverage_terms,
+            coverage_ratio=analysis.coverage_ratio,
             window_id=window_key,
             status_reason="window_composed_support",
         )
@@ -702,6 +819,118 @@ def _coverage_ratio(coverage_terms: tuple[str, ...], focus_terms: tuple[str, ...
     if not focus_terms:
         return 0.0
     return len(set(coverage_terms) & set(focus_terms)) / len(set(focus_terms))
+
+
+# Analyze one selected retrieval window so the CLI can explain strict and conversational-memory qualification outcomes.
+def _analyze_window_composition(
+    window_items: tuple[EvidenceItem, ...],
+    focus_terms: tuple[str, ...],
+) -> _WindowQualificationDebug:
+    strict_qualified_items = tuple(
+        item for item in window_items
+        if _is_qualified_evidence_item(item, focus_terms, window_items)
+    )
+    strict_passed = _has_combined_focus_support(strict_qualified_items, focus_terms) if focus_terms else bool(strict_qualified_items)
+
+    contributors = tuple(item for item in window_items if _is_window_contributing_item(item))
+    coverage_terms = tuple(sorted({term for item in contributors for term in item.matched_terms}))
+    coverage_ratio = _coverage_ratio(coverage_terms, focus_terms)
+    user_contributors = tuple(item for item in contributors if item.author_role == "user")
+    assistant_contributors = tuple(item for item in contributors if item.author_role == "assistant")
+    user_coverage_terms = tuple(sorted({term for item in user_contributors for term in item.matched_terms}))
+    user_authored_coverage_met_threshold = _coverage_ratio(user_coverage_terms, focus_terms) >= COMPOSED_SUPPORT_COVERAGE_THRESHOLD
+
+    failure_reasons: list[str] = []
+    if not contributors:
+        failure_reasons.append("no_direct_lexical_matches")
+    if len(contributors) < 2 and not strict_passed:
+        failure_reasons.append("only_one_contributing_excerpt")
+    if strict_passed:
+        conversational_memory_passed = False
+    else:
+        conversational_memory_passed = (
+            coverage_ratio >= COMPOSED_SUPPORT_COVERAGE_THRESHOLD
+            and len(user_contributors) >= 1
+            and len(contributors) >= 2
+            and user_authored_coverage_met_threshold
+        )
+    if coverage_ratio < COMPOSED_SUPPORT_COVERAGE_THRESHOLD:
+        failure_reasons.append("coverage_below_threshold")
+    if len(user_contributors) < 1:
+        failure_reasons.append("no_user_authored_contributor")
+    if not user_authored_coverage_met_threshold:
+        failure_reasons.append("user_only_coverage_below_threshold")
+    if focus_terms and not strict_passed:
+        failure_reasons.append("strict_combined_concept_not_supported")
+    if not strict_passed and not conversational_memory_passed:
+        failure_reasons.append("no_window_level_composed_support")
+
+    first_item = window_items[0] if window_items else None
+    return _WindowQualificationDebug(
+        candidate_rank=first_item.source_result_rank if first_item else 0,
+        conversation_id=first_item.citation.conversation_id if first_item else "",
+        focal_message_id=first_item.citation.message_id if first_item else None,
+        window_id=first_item.window_id if first_item else None,
+        strict_qualification_passed=strict_passed,
+        conversational_memory_qualification_passed=conversational_memory_passed,
+        contributing_items=contributors,
+        coverage_terms=coverage_terms,
+        coverage_ratio=coverage_ratio,
+        user_excerpt_count=len(user_contributors),
+        assistant_excerpt_count=len(assistant_contributors),
+        user_authored_coverage_met_threshold=user_authored_coverage_met_threshold,
+        failure_reasons=tuple(dict.fromkeys(failure_reasons)),
+    )
+
+
+# Build per-window debug rows in retrieval rank order so CLI output matches the real candidate order.
+def _build_window_debug_rows(
+    retrieval_results: tuple[object, ...],
+    selected_evidence: tuple[EvidenceItem, ...],
+    focus_terms: tuple[str, ...],
+) -> tuple[_WindowQualificationDebug, ...]:
+    debug_rows: list[_WindowQualificationDebug] = []
+    for result in retrieval_results:
+        window_rank = int(getattr(result, "rank", 0))
+        window_items = tuple(item for item in selected_evidence if item.source_result_rank == window_rank)
+        if not window_items:
+            debug_rows.append(
+                _WindowQualificationDebug(
+                    candidate_rank=window_rank,
+                    conversation_id=string_or_none(getattr(result, "conversation_id", None)) or "",
+                    focal_message_id=string_or_none(getattr(result, "focal_message_id", None)),
+                    window_id=string_or_none(getattr(result, "result_id", None)) or f"window:{window_rank}",
+                    strict_qualification_passed=False,
+                    conversational_memory_qualification_passed=False,
+                    contributing_items=(),
+                    coverage_terms=(),
+                    coverage_ratio=0.0,
+                    user_excerpt_count=0,
+                    assistant_excerpt_count=0,
+                    user_authored_coverage_met_threshold=False,
+                    failure_reasons=("no_direct_lexical_matches", "no_window_level_composed_support"),
+                )
+            )
+            continue
+        analyzed = _analyze_window_composition(window_items, focus_terms)
+        debug_rows.append(
+            _WindowQualificationDebug(
+                candidate_rank=window_rank,
+                conversation_id=string_or_none(getattr(result, "conversation_id", None)) or analyzed.conversation_id,
+                focal_message_id=string_or_none(getattr(result, "focal_message_id", None)) or analyzed.focal_message_id,
+                window_id=string_or_none(getattr(result, "result_id", None)) or analyzed.window_id,
+                strict_qualification_passed=analyzed.strict_qualification_passed,
+                conversational_memory_qualification_passed=analyzed.conversational_memory_qualification_passed,
+                contributing_items=analyzed.contributing_items,
+                coverage_terms=analyzed.coverage_terms,
+                coverage_ratio=analyzed.coverage_ratio,
+                user_excerpt_count=analyzed.user_excerpt_count,
+                assistant_excerpt_count=analyzed.assistant_excerpt_count,
+                user_authored_coverage_met_threshold=analyzed.user_authored_coverage_met_threshold,
+                failure_reasons=analyzed.failure_reasons,
+            )
+        )
+    return tuple(debug_rows)
 
 
 # Deduplicate citations by message id while preserving evidence order.
