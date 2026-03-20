@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from rag.retrieval.utils import string_or_none
+
 
 # The read model is intentionally thin and only builds structures needed by the first slice.
 # Phase 2 works directly over conversations.jsonl, messages.jsonl, and manifest.json.
@@ -49,7 +51,7 @@ def load_normalized_run(run_dir: Path) -> LoadedRun:
 
     conversation_by_id: dict[str, dict[str, object]] = {}
     for conversation in conversations:
-        conversation_id = _string_or_none(conversation.get("conversation_id"))
+        conversation_id = string_or_none(conversation.get("conversation_id"))
         if not conversation_id:
             continue
         conversation_by_id[conversation_id] = conversation
@@ -59,8 +61,8 @@ def load_normalized_run(run_dir: Path) -> LoadedRun:
     searchable_text_by_message_id: dict[str, str] = {}
 
     for message in messages:
-        message_id = _string_or_none(message.get("message_id"))
-        conversation_id = _string_or_none(message.get("conversation_id"))
+        message_id = string_or_none(message.get("message_id"))
+        conversation_id = string_or_none(message.get("conversation_id"))
         if not message_id or not conversation_id:
             continue
 
@@ -75,7 +77,7 @@ def load_normalized_run(run_dir: Path) -> LoadedRun:
     }
 
     return LoadedRun(
-        run_id=_string_or_none(manifest.get("run_id")) or resolved_run_dir.name,
+        run_id=string_or_none(manifest.get("run_id")) or resolved_run_dir.name,
         run_dir=resolved_run_dir,
         manifest=manifest,
         conversations_path=conversations_path,
@@ -90,7 +92,7 @@ def load_normalized_run(run_dir: Path) -> LoadedRun:
 
 # Build the normalized lexical text used for message ranking.
 def build_searchable_text(message: dict[str, object]) -> str:
-    direct_text = _string_or_none(message.get("text"))
+    direct_text = string_or_none(message.get("text"))
     if direct_text:
         # Phase 1 already derives text from content blocks, so prefer it and avoid duplicate terms.
         return normalize_lexical_text(direct_text)
@@ -101,7 +103,7 @@ def build_searchable_text(message: dict[str, object]) -> str:
         for block in content_blocks:
             if not isinstance(block, dict):
                 continue
-            block_text = _string_or_none(block.get("text"))
+            block_text = string_or_none(block.get("text"))
             if block_text:
                 text_parts.append(block_text)
 
@@ -147,18 +149,10 @@ def _message_order_key(message: dict[str, object]) -> tuple[int, str]:
     sequence_index = message.get("sequence_index")
     if not isinstance(sequence_index, int):
         sequence_index = 0
-    message_id = _string_or_none(message.get("message_id")) or ""
+    message_id = string_or_none(message.get("message_id")) or ""
     return sequence_index, message_id
 
 
 # Extract lowercase alphanumeric tokens used by the simple lexical ranker.
 def _tokenize(value: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", value.lower())
-
-
-# Normalize optional scalar values to strings where the read model expects them.
-def _string_or_none(value: object) -> str | None:
-    if isinstance(value, str):
-        stripped = value.strip()
-        return stripped or None
-    return None

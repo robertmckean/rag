@@ -150,6 +150,29 @@ class RetrieveCliTests(unittest.TestCase):
         self.assertIn("result_count: 0", stdout_value)
         self.assertIn("no matching results", stdout_value)
 
+    # Verify that the CLI writes structured JSON output for a successful retrieval run.
+    def test_writes_json_output_on_success(self) -> None:
+        run_dir = self.tmp_root / "json-out"
+        json_out = self.tmp_root / "artifacts" / "results.json"
+        self._write_minimal_run(run_dir)
+
+        exit_code, stdout_value, stderr_value = self._run_cli(
+            "--run-dir",
+            str(run_dir),
+            "--query",
+            "resume",
+            "--json-out",
+            str(json_out),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr_value, "")
+        self.assertTrue(json_out.exists())
+        payload = json.loads(json_out.read_text(encoding="utf-8"))
+        self.assertEqual(payload["result_count"], 1)
+        self.assertEqual(payload["results"][0]["focal_message_id"], "chatgpt:message:test")
+        self.assertIn("json_out:", stdout_value)
+
 
 if __name__ == "__main__":
     unittest.main()

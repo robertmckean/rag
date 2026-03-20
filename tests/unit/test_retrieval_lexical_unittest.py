@@ -1,8 +1,17 @@
+import json
 import unittest
 from pathlib import Path
+import shutil
 from unittest.mock import patch
 
-from rag.retrieval.lexical import RetrievalFilters, parse_query, retrieve_message_timeline, retrieve_message_windows
+from rag.retrieval.lexical import (
+    RetrievalFilters,
+    parse_query,
+    retrieve_message_timeline,
+    retrieve_message_windows,
+    search_loaded_run,
+)
+from rag.retrieval.read_model import load_normalized_run
 
 
 # These tests cover the first message-first lexical retrieval slice and its result contract.
@@ -12,6 +21,14 @@ class RetrievalLexicalTests(unittest.TestCase):
     # Point tests at the normalized run fixture used for all first-slice retrieval checks.
     def setUp(self) -> None:
         self.run_dir = Path("tests/fixtures/retrieval/sample_run")
+        self.tmp_root = Path("tests/_tmp_retrieval_lexical")
+        if self.tmp_root.exists():
+            shutil.rmtree(self.tmp_root, ignore_errors=True)
+
+    # Remove any temporary retrieval fixture copies used by mutation-style tests.
+    def tearDown(self) -> None:
+        if self.tmp_root.exists():
+            shutil.rmtree(self.tmp_root, ignore_errors=True)
 
     # Verify that lexical ranking returns contextual windows around the highest-scoring focal messages.
     def test_ranks_messages_and_returns_context_windows(self) -> None:
@@ -129,6 +146,36 @@ class RetrievalLexicalTests(unittest.TestCase):
         self.assertEqual(results[0].match_basis["scoring_features"]["chronological_rank_basis"], "created_at_asc")
         self.assertEqual(results[0].match_basis["result_view"], "contextual_window")
 
+    # Verify that missing focal timestamps sort after timestamped results in newest mode.
+    def test_newest_mode_places_missing_timestamps_last(self) -> None:
+        mutated_run_dir = self._copy_fixture_run("missing-created-at-newest")
+        self._append_conversation_and_message(
+            mutated_run_dir,
+            conversation_id="chatgpt:conversation:conv-missing-newest",
+            message_id="chatgpt:message:msg-missing-newest",
+            text="Resume leadership chronology check.",
+            created_at=None,
+        )
+
+        results = retrieve_message_windows(mutated_run_dir, "resume leadership", limit=5, mode="newest")
+
+        self.assertEqual(results[-1].focal_message_id, "chatgpt:message:msg-missing-newest")
+
+    # Verify that missing focal timestamps sort after timestamped results in oldest mode.
+    def test_oldest_mode_places_missing_timestamps_last(self) -> None:
+        mutated_run_dir = self._copy_fixture_run("missing-created-at-oldest")
+        self._append_conversation_and_message(
+            mutated_run_dir,
+            conversation_id="chatgpt:conversation:conv-missing-oldest",
+            message_id="chatgpt:message:msg-missing-oldest",
+            text="Resume leadership chronology check.",
+            created_at=None,
+        )
+
+        results = retrieve_message_windows(mutated_run_dir, "resume leadership", limit=5, mode="oldest")
+
+        self.assertEqual(results[-1].focal_message_id, "chatgpt:message:msg-missing-oldest")
+
     # Verify that relevance_recency adds a visible but modest boost for newer matching messages.
     def test_relevance_recency_mode_adds_modest_recency_boost(self) -> None:
         results = retrieve_message_windows(self.run_dir, "resume", limit=5, mode="relevance_recency")
@@ -224,6 +271,18 @@ class RetrievalLexicalTests(unittest.TestCase):
             ],
         )
 
+    # Verify that the public window API rejects timeline mode with an explicit guidance error.
+    def test_retrieve_message_windows_rejects_timeline_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "retrieve_message_timeline"):
+            retrieve_message_windows(self.run_dir, "project", mode="timeline")
+
+    # Verify that the lower-level loaded-run window API also rejects timeline mode explicitly.
+    def test_search_loaded_run_rejects_timeline_mode(self) -> None:
+        loaded_run = load_normalized_run(self.run_dir)
+
+        with self.assertRaisesRegex(ValueError, "search_loaded_run_timeline"):
+            search_loaded_run(loaded_run, "project", mode="timeline")
+
     # Verify that query parsing deduplicates repeated terms while preserving order.
     def test_query_parsing_deduplicates_repeated_terms(self) -> None:
         parsed_query = parse_query("resume resume leadership resume")
@@ -277,6 +336,77 @@ class RetrievalLexicalTests(unittest.TestCase):
         self.assertEqual(results[0].match_basis["quoted_phrases"], ["resume summary"])
         self.assertEqual(results[0].match_basis["normalized_phrase_targets"], ["resume summary"])
         self.assertEqual(results[0].match_basis["matched_phrase_targets"], ["resume summary"])
+
+    # Copy the retrieval run fixture so one test can safely mutate timestamps without affecting others.
+    def _copy_fixture_run(self, name: str) -> Path:
+        destination = self.tmp_root / name
+        shutil.copytree(self.run_dir, destination)
+        return destination
+
+    # Rewrite one message's created_at field inside the copied fixture run.
+    def _replace_message_created_at(self, run_dir: Path, message_id: str, created_at: str | None) -> None:
+        messages_path = run_dir / "messages.jsonl"
+        updated_lines: list[str] = []
+        for raw_line in messages_path.read_text(encoding="utf-8").splitlines():
+            if not raw_line.strip():
+                continue
+            payload = json.loads(raw_line)
+            if payload.get("message_id") == message_id:
+                payload["created_at"] = created_at
+            updated_lines.append(json.dumps(payload, ensure_ascii=True))
+        messages_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+
+    # Append one standalone matching conversation and focal message to a copied fixture run.
+    def _append_conversation_and_message(
+        self,
+        run_dir: Path,
+        *,
+        conversation_id: str,
+        message_id: str,
+        text: str,
+        created_at: str | None,
+    ) -> None:
+        conversation = {
+            "conversation_id": conversation_id,
+            "provider": "chatgpt",
+            "source_conversation_id": conversation_id.rsplit(":", 1)[-1],
+            "title": "Missing Timestamp Fixture",
+            "summary": None,
+            "created_at": created_at,
+            "updated_at": created_at,
+            "message_count": 1,
+            "participant_summary": {"roles": ["user"], "authors": []},
+            "source_artifact": {"root": "History_ChatGPT", "conversation_file": "conversations-999.json", "sidecar_files": []},
+            "source_metadata": {},
+        }
+        message = {
+            "message_id": message_id,
+            "conversation_id": conversation_id,
+            "provider": "chatgpt",
+            "source_message_id": message_id.rsplit(":", 1)[-1],
+            "parent_message_id": None,
+            "sequence_index": 0,
+            "author_role": "user",
+            "author_name": None,
+            "sender": None,
+            "created_at": created_at,
+            "updated_at": None,
+            "text": text,
+            "content_blocks": [
+                {"type": "text", "text": text, "start_timestamp": None, "stop_timestamp": None, "citations": None}
+            ],
+            "attachments": [],
+            "source_artifact": {"conversation_file": "conversations-999.json", "raw_message_path": f"mapping.{message_id}.message"},
+            "source_metadata": {},
+        }
+        (run_dir / "conversations.jsonl").write_text(
+            (run_dir / "conversations.jsonl").read_text(encoding="utf-8") + json.dumps(conversation, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+        (run_dir / "messages.jsonl").write_text(
+            (run_dir / "messages.jsonl").read_text(encoding="utf-8") + json.dumps(message, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":

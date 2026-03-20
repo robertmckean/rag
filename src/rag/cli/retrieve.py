@@ -7,7 +7,12 @@ import json
 from pathlib import Path
 import sys
 
-from rag.retrieval.lexical import RETRIEVAL_MODES, RetrievalFilters, retrieve_message_timeline, retrieve_message_windows
+from rag.retrieval.lexical import (
+    CLI_RETRIEVAL_MODES,
+    RetrievalFilters,
+    retrieve_message_timeline,
+    retrieve_message_windows,
+)
 
 
 # The CLI is a debugging surface for the first retrieval slice rather than a full product interface.
@@ -23,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-dir", type=Path, required=True, help="Path to one normalized run directory.")
     parser.add_argument("--query", type=str, required=True, help="Query text to rank against normalized messages.")
     parser.add_argument("--limit", type=int, default=10, help="Maximum number of retrieval results to return.")
-    parser.add_argument("--mode", choices=RETRIEVAL_MODES, default="relevance", help="Retrieval ordering mode.")
+    parser.add_argument("--mode", choices=CLI_RETRIEVAL_MODES, default="relevance", help="Retrieval ordering mode.")
     parser.add_argument("--provider", type=str, default=None, help="Optional provider filter.")
     parser.add_argument("--conversation-id", type=str, default=None, help="Optional conversation filter.")
     parser.add_argument("--from", dest="date_from", type=str, default=None, help="Optional inclusive lower date bound.")

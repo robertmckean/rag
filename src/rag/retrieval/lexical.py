@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from rag.retrieval.read_model import LoadedRun, load_normalized_run, normalize_lexical_text, tokenize_query
+from rag.retrieval.utils import string_or_none
 
 
 # Ranking is message-first because message text is the narrowest useful relevance signal.
@@ -23,7 +24,9 @@ BM25_B = 0.75
 EXACT_PHRASE_BOOST = 1.5
 TITLE_TERM_BOOST = 0.35
 RECENCY_BOOST_MAX = 0.35
-RETRIEVAL_MODES = ("relevance", "newest", "oldest", "relevance_recency", "timeline")
+WINDOW_RETRIEVAL_MODES = ("relevance", "newest", "oldest", "relevance_recency")
+TIMELINE_RETRIEVAL_MODE = "timeline"
+CLI_RETRIEVAL_MODES = WINDOW_RETRIEVAL_MODES + (TIMELINE_RETRIEVAL_MODE,)
 STOPWORD_FILTER_ENABLED = False
 STOPWORDS = frozenset(
     {
@@ -229,6 +232,8 @@ def retrieve_message_windows(
     mode: str = "relevance",
     filters: RetrievalFilters | None = None,
     ) -> tuple[RankedResult, ...]:
+    if mode == TIMELINE_RETRIEVAL_MODE:
+        raise ValueError("Timeline mode requires retrieve_message_timeline() or the CLI --mode timeline path.")
     loaded_run = load_normalized_run(run_dir)
     return search_loaded_run(
         loaded_run,
@@ -271,7 +276,9 @@ def search_loaded_run(
     parsed_query = parse_query(query)
     if not parsed_query.scoring_terms:
         return ()
-    if mode not in RETRIEVAL_MODES:
+    if mode == TIMELINE_RETRIEVAL_MODE:
+        raise ValueError("Timeline mode is not supported by search_loaded_run(); use search_loaded_run_timeline().")
+    if mode not in WINDOW_RETRIEVAL_MODES:
         raise ValueError(f"Unsupported retrieval mode: {mode}")
 
     candidates = _rank_candidates(loaded_run, parsed_query, resolved_filters)
@@ -357,8 +364,8 @@ def _rank_candidates(
         )
         exact_phrase_match = bool(matched_phrase_targets)
 
-        conversation = loaded_run.conversation_by_id.get(_string_or_none(message.get("conversation_id")) or "")
-        conversation_title = _string_or_none(conversation.get("title")) if conversation else None
+        conversation = loaded_run.conversation_by_id.get(string_or_none(message.get("conversation_id")) or "")
+        conversation_title = string_or_none(conversation.get("title")) if conversation else None
         normalized_title = normalize_lexical_text(conversation_title or "")
         title_overlap_tokens = tuple(sorted(query_token_set & set(tokenize_query(normalized_title))))
 
@@ -378,12 +385,12 @@ def _rank_candidates(
                 score=score,
                 base_score=score,
                 recency_boost=0.0,
-                provider=_string_or_none(message.get("provider")) or "unknown",
-                conversation_id=_string_or_none(message.get("conversation_id")) or "",
+                provider=string_or_none(message.get("provider")) or "unknown",
+                conversation_id=string_or_none(message.get("conversation_id")) or "",
                 message_id=message_id,
-                created_at=_string_or_none(message.get("created_at")),
-                created_at_value=_parse_iso_timestamp(_string_or_none(message.get("created_at")) or "")
-                if _string_or_none(message.get("created_at"))
+                created_at=string_or_none(message.get("created_at")),
+                created_at_value=_parse_iso_timestamp(string_or_none(message.get("created_at")) or "")
+                if string_or_none(message.get("created_at"))
                 else None,
                 match_basis={
                     "raw_query": parsed_query.raw_query,
@@ -416,7 +423,7 @@ def _rank_candidates(
                         "ranking_score": round(score, 6),
                         "final_score": round(score, 6),
                     },
-                    "focal_match_excerpt": _build_excerpt(message, overlap_tokens),
+                    "focal_match_excerpt": _build_excerpt(message),
                 },
             )
         )
@@ -507,7 +514,7 @@ def _apply_relevance_recency_mode(candidates: list[_Candidate]) -> list[_Candida
 def _sort_candidates(candidates: list[_Candidate], *, mode: str) -> list[_Candidate]:
     if mode == "newest":
         return sorted(candidates, key=lambda candidate: _candidate_sort_key_chronological(candidate, descending=True))
-    if mode in {"oldest", "timeline"}:
+    if mode in {"oldest", TIMELINE_RETRIEVAL_MODE}:
         return sorted(candidates, key=lambda candidate: _candidate_sort_key_chronological(candidate, descending=False))
     return sorted(candidates, key=_candidate_sort_key)
 
@@ -574,11 +581,11 @@ def _build_window_result(
         run_id=loaded_run.run_id,
         provider=candidate.provider,
         conversation_id=candidate.conversation_id,
-        conversation_title=_string_or_none(conversation.get("title")),
-        conversation_created_at=_string_or_none(conversation.get("created_at")),
-        conversation_updated_at=_string_or_none(conversation.get("updated_at")),
+        conversation_title=string_or_none(conversation.get("title")),
+        conversation_created_at=string_or_none(conversation.get("created_at")),
+        conversation_updated_at=string_or_none(conversation.get("updated_at")),
         focal_message_id=candidate.message_id,
-        focal_created_at=_string_or_none(focal_message.get("created_at")),
+        focal_created_at=string_or_none(focal_message.get("created_at")),
         focal_sequence_index=focal_sequence,
         window_start_sequence_index=start_sequence,
         window_end_sequence_index=end_sequence,
@@ -625,12 +632,12 @@ def _build_timeline_result(
         run_id=loaded_run.run_id,
         provider=candidate.provider,
         conversation_id=candidate.conversation_id,
-        conversation_title=_string_or_none(conversation.get("title")),
+        conversation_title=string_or_none(conversation.get("title")),
         focal_message_id=candidate.message_id,
-        focal_created_at=_string_or_none(focal_message.get("created_at")),
+        focal_created_at=string_or_none(focal_message.get("created_at")),
         focal_sequence_index=_message_sequence_index(focal_message),
-        author_role=_string_or_none(focal_message.get("author_role")),
-        focal_excerpt=_build_excerpt(focal_message, tuple(match_basis.get("matched_text_terms", []))),
+        author_role=string_or_none(focal_message.get("author_role")),
+        focal_excerpt=_build_excerpt(focal_message),
         match_basis=match_basis,
         provenance={
             "conversations_jsonl_path": str(loaded_run.conversations_path),
@@ -644,11 +651,11 @@ def _build_timeline_result(
 
 # Apply the minimal first-slice metadata filters against one message.
 def _message_matches_filters(message: dict[str, object], filters: RetrievalFilters) -> bool:
-    if filters.provider and _string_or_none(message.get("provider")) != filters.provider:
+    if filters.provider and string_or_none(message.get("provider")) != filters.provider:
         return False
-    if filters.conversation_id and _string_or_none(message.get("conversation_id")) != filters.conversation_id:
+    if filters.conversation_id and string_or_none(message.get("conversation_id")) != filters.conversation_id:
         return False
-    if filters.author_role and _string_or_none(message.get("author_role")) != filters.author_role:
+    if filters.author_role and string_or_none(message.get("author_role")) != filters.author_role:
         return False
     if not _message_matches_date_filters(message, filters.date_from, filters.date_to):
         return False
@@ -664,7 +671,7 @@ def _message_matches_date_filters(
     if not date_from and not date_to:
         return True
 
-    created_at = _string_or_none(message.get("created_at"))
+    created_at = string_or_none(message.get("created_at"))
     if not created_at:
         return False
 
@@ -693,15 +700,13 @@ def _matched_filters_dict(filters: RetrievalFilters) -> dict[str, object]:
 
 
 # Build a short excerpt from the focal message text for ranking inspection output.
-def _build_excerpt(message: dict[str, object], overlap_tokens: tuple[str, ...]) -> str | None:
-    text = _string_or_none(message.get("text")) or ""
+def _build_excerpt(message: dict[str, object]) -> str | None:
+    text = string_or_none(message.get("text")) or ""
     if not text:
         return None
     excerpt = text.strip()
     if len(excerpt) > 160:
         excerpt = excerpt[:157] + "..."
-    if overlap_tokens:
-        return excerpt
     return excerpt
 
 
@@ -738,7 +743,7 @@ def _chronological_rank_basis(mode: str) -> str:
 # Find a focal message inside its ordered conversation stream.
 def _find_message_position(messages: tuple[dict[str, object], ...], message_id: str) -> int:
     for index, message in enumerate(messages):
-        if _string_or_none(message.get("message_id")) == message_id:
+        if string_or_none(message.get("message_id")) == message_id:
             return index
     return 0
 
@@ -755,7 +760,7 @@ def _message_sequence_index(message: dict[str, object]) -> int:
 def _source_conversation_file(conversation: dict[str, object]) -> str | None:
     source_artifact = conversation.get("source_artifact")
     if isinstance(source_artifact, dict):
-        return _string_or_none(source_artifact.get("conversation_file"))
+        return string_or_none(source_artifact.get("conversation_file"))
     return None
 
 
@@ -763,7 +768,7 @@ def _source_conversation_file(conversation: dict[str, object]) -> str | None:
 def _source_message_path(message: dict[str, object]) -> str | None:
     source_artifact = message.get("source_artifact")
     if isinstance(source_artifact, dict):
-        return _string_or_none(source_artifact.get("raw_message_path"))
+        return string_or_none(source_artifact.get("raw_message_path"))
     return None
 
 
@@ -780,14 +785,6 @@ def _parse_date_boundary(value: str, *, end_of_day: bool) -> datetime:
         normalized_value = f"{normalized_value}{suffix}"
     parsed = datetime.fromisoformat(normalized_value.replace("Z", "+00:00"))
     return parsed.astimezone(timezone.utc)
-
-
-# Normalize optional scalar values to strings where retrieval expects them.
-def _string_or_none(value: object) -> str | None:
-    if isinstance(value, str):
-        stripped = value.strip()
-        return stripped or None
-    return None
 
 
 # Remove duplicate tokens while preserving the user query's left-to-right order.

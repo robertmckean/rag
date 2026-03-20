@@ -26,7 +26,10 @@ data/normalized/
 
 # Temp / junk
 tests/**/tmp*
+tests/_tmp*/
+tests/**/_tmp*/
 tests/**/claude_sidecar*
+tests/claude_sidecar*/
 codex_logs/
 history/History_Claude/analyze_claude_export.py
 history/History_Claude/claude_analysis.json

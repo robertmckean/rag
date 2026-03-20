@@ -15,7 +15,7 @@ Personal RAG system built from exported ChatGPT and Claude histories.
 
 The local workflow is PowerShell-first and uses the Conda environment named in `.conda-env.txt`.
 
-Current project configuration lives in `src/rag/config.py`. The repo-root `config.py` remains as a temporary compatibility shim.
+Current project configuration lives in `src/rag/config.py`.
 
 For Python validation in this repo, the practical command pattern is:
 
