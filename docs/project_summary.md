@@ -14,20 +14,43 @@ The repository now has three active layers:
   deterministic benchmark evaluation, and an opt-in `conversational_memory`
   grounding mode for same-window local evidence composition
 
-## Release Baseline
+## Phase 4A Hybrid Retrieval
 
-The current release line is the last pure-BM25 retrieval baseline before hybrid
-retrieval work.
+The retrieval layer now supports three channels over a single normalized run:
+- `bm25`
+- `semantic`
+- `hybrid`
 
-- active retrieval method: BM25 lexical retrieval
-- answering/grounding: stable and deterministic on top of retrieval
-- next planned retrieval step: hybrid BM25 + embeddings
+Phase 4A keeps the system file-based and local:
+- one embedding artifact per normalized run
+- one embedding per normalized message
+- cosine similarity over stored vectors
+- no vector database
+- no ANN index
+- no reranker
 
-Known example of the current lexical boundary:
+Hybrid retrieval is a union of BM25 and semantic candidates with explicit
+provenance:
+- `bm25`
+- `semantic`
+- `both`
+
+Grounding remains unchanged:
+- retrieval can broaden recall
+- answer qualification and status assignment remain strict
+
+## Current Retrieval Boundary
+
+Hybrid retrieval is now implemented, but BM25 remains the lexical baseline and
+semantic retrieval only helps when the embedding artifact actually covers the
+relevant messages.
+
+Known example of the lexical boundary:
 - query: `What have I said about Larry's guitar playing?`
 - real retrieved evidence mentions Larry and `playing the bass`
-- lexical grounding correctly remains insufficient because `guitar` is not
-  present in the retrieved evidence
+- BM25 alone can miss semantically related phrasing when wording diverges
+- semantic and hybrid retrieval improve only after the Larry-related messages
+  are actually embedded into the run-local artifact
 
 See `docs/known_limitations.md` for the documented failure mode.
 
@@ -57,17 +80,17 @@ other modes return contextual message windows around focal matches.
 
 ## Current Non-Goals
 
-- embeddings
 - vector databases
 - UI implementation
 - cross-run retrieval
-- semantic search beyond the current lexical retrieval layer
-- LLM-backed answer generation
+- ANN indexing
+- reranking
 - autonomous follow-up questions
 - answer verification loops
 
 Near-term next step after this baseline:
-- introduce embeddings as a second retrieval channel without removing BM25
+- improve embedding-build robustness and retrieval-quality evaluation without
+  replacing BM25
 
 ## Current Answering/Eval Scope
 

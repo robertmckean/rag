@@ -2,8 +2,15 @@
 
 ## Current Retrieval Boundary
 
-Current retrieval in this repository is BM25-based lexical retrieval over a
-single normalized run.
+Current retrieval in this repository now has three channels over a single
+normalized run:
+
+- BM25 lexical retrieval
+- semantic retrieval over stored message embeddings
+- hybrid retrieval that unions both
+
+BM25 remains the lexical baseline. Semantic retrieval broadens recall, but the
+answer layer still requires strict grounding.
 
 That means retrieval depends on direct vocabulary overlap between the query and
 the normalized message text.
@@ -35,10 +42,8 @@ BM25 tuning alone.
 ## Conclusion
 
 This limitation is not expected to be solved by more BM25 tweaking, ranking
-adjustments, or answer-layer prompt changes.
+adjustments, or answer-layer prompt changes alone.
 
-The next retrieval milestone is hybrid retrieval:
-
-- keep BM25 as the lexical channel
-- add embeddings as a second semantic retrieval channel
-- compare hybrid retrieval against this pure-BM25 baseline
+Phase 4A addresses it by adding embeddings as a second retrieval channel, but
+the quality of hybrid retrieval will still depend on model choice, artifact
+coverage, and future evaluation work.

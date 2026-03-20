@@ -101,6 +101,8 @@ Known phase-1 limitations:
 
 Current retrieval capabilities:
 - BM25-based lexical message ranking
+- semantic retrieval over stored message embeddings
+- hybrid retrieval that unions BM25 and semantic results
 - contextual message-window retrieval
 - retrieval modes:
   - `relevance`
@@ -112,9 +114,9 @@ Current retrieval capabilities:
 - timeline exploration across conversations within one normalized run
 
 Current retrieval boundary:
-- retrieval is still lexical only
-- BM25 is the active retrieval method
-- there is no embedding or semantic retrieval channel in this version
+- BM25 remains the lexical baseline
+- semantic retrieval requires a run-local embeddings artifact
+- hybrid retrieval merges BM25 and semantic candidates without changing grounding rules
 
 Known lexical limitation:
 - vocabulary mismatch can fail even when the topic is relevant
@@ -126,9 +128,8 @@ Known lexical limitation:
 - see `docs/known_limitations.md`
 
 Next retrieval milestone:
-- keep BM25 as the baseline lexical channel
-- add embeddings as a second retrieval channel
-- use this pure-BM25 release as the regression baseline for hybrid retrieval
+- Phase 4A is the first hybrid baseline
+- the next work after this phase is retrieval tuning and evaluation, not replacing BM25
 
 Retrieval CLI:
 ```powershell
@@ -138,13 +139,78 @@ raise SystemExit(main([
   '--run-dir', 'data/normalized/runs/<run_id>',
   '--query', 'project',
   '--mode', 'timeline',
-  '--limit', '10'
+  '--limit', '10',
+  '--channel', 'bm25'
 ]))
 '@ | python -
 ```
 
 Timeline mode returns compact chronological focal-message entries across conversations.
 The other retrieval modes return contextual message windows.
+
+Embeddings build CLI:
+```powershell
+$env:PYTHONPATH='src'; @'
+from rag.cli.build_embeddings import main
+raise SystemExit(main([
+  '--run-dir', 'data/normalized/runs/<run_id>',
+  '--model', 'text-embedding-3-small',
+  '--batch-size', '10',
+  '--limit', '1000'
+]))
+'@ | python -
+```
+
+Targeted embedding build example:
+```powershell
+$env:PYTHONPATH='src'; @'
+from rag.cli.build_embeddings import main
+raise SystemExit(main([
+  '--run-dir', 'data/normalized/runs/<run_id>',
+  '--model', 'text-embedding-3-small',
+  '--batch-size', '10',
+  '--conversation-id', '<conversation_id>'
+]))
+'@ | python -
+```
+
+Semantic retrieval example:
+```powershell
+$env:PYTHONPATH='src'; @'
+from rag.cli.retrieve import main
+raise SystemExit(main([
+  '--run-dir', 'data/normalized/runs/<run_id>',
+  '--query', 'Larry guitar playing',
+  '--channel', 'semantic',
+  '--embedding-model', 'text-embedding-3-small',
+  '--limit', '5'
+]))
+'@ | python -
+```
+
+Hybrid retrieval example:
+```powershell
+$env:PYTHONPATH='src'; @'
+from rag.cli.retrieve import main
+raise SystemExit(main([
+  '--run-dir', 'data/normalized/runs/<run_id>',
+  '--query', 'Larry guitar playing',
+  '--channel', 'hybrid',
+  '--embedding-model', 'text-embedding-3-small',
+  '--semantic-top-k', '10',
+  '--limit', '5'
+]))
+'@ | python -
+```
+
+Embedding notes:
+- artifact location: `data/normalized/runs/<run_id>/message_embeddings.jsonl`
+- retrieval unit: one embedding per normalized message
+- OpenAI SDK and credentials are required only for embedding build and live semantic query embedding
+- grounding remains strict even when retrieval recall broadens
+- first live validation should use a small batch size such as `5` or `10`
+- after validating early artifact creation and bounded memory use, increase
+  batch size for larger builds
 
 ## Phase 3A Grounded Answers
 

@@ -7,8 +7,10 @@ import json
 from pathlib import Path
 import sys
 
+from rag.embeddings.builder import DEFAULT_EMBEDDING_MODEL
 from rag.retrieval.lexical import (
     CLI_RETRIEVAL_MODES,
+    RETRIEVAL_CHANNELS,
     RetrievalFilters,
     retrieve_message_timeline,
     retrieve_message_windows,
@@ -29,11 +31,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--query", type=str, required=True, help="Query text to rank against normalized messages.")
     parser.add_argument("--limit", type=int, default=10, help="Maximum number of retrieval results to return.")
     parser.add_argument("--mode", choices=CLI_RETRIEVAL_MODES, default="relevance", help="Retrieval ordering mode.")
+    parser.add_argument(
+        "--channel",
+        choices=RETRIEVAL_CHANNELS,
+        default="bm25",
+        help="Retrieval channel: existing BM25, semantic embeddings, or hybrid union.",
+    )
     parser.add_argument("--provider", type=str, default=None, help="Optional provider filter.")
     parser.add_argument("--conversation-id", type=str, default=None, help="Optional conversation filter.")
     parser.add_argument("--from", dest="date_from", type=str, default=None, help="Optional inclusive lower date bound.")
     parser.add_argument("--to", dest="date_to", type=str, default=None, help="Optional inclusive upper date bound.")
     parser.add_argument("--author-role", type=str, default=None, help="Optional canonical author role filter.")
+    parser.add_argument("--embedding-model", type=str, default=DEFAULT_EMBEDDING_MODEL, help="Embedding model for semantic and hybrid retrieval.")
+    parser.add_argument("--semantic-top-k", type=int, default=None, help="Semantic candidate pool size before window expansion.")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional path for structured JSON results.")
     return parser
 
@@ -49,12 +59,17 @@ def main(argv: list[str] | None = None) -> int:
         author_role=args.author_role,
     )
     try:
+        if args.mode == "timeline" and args.channel != "bm25":
+            raise ValueError("Semantic and hybrid retrieval are not supported with --mode timeline in Phase 4A.")
         results = retrieve_message_windows(
             args.run_dir.resolve(),
             args.query,
             limit=args.limit,
             mode=args.mode,
             filters=filters,
+            channel=args.channel,
+            semantic_top_k=args.semantic_top_k,
+            embedding_model=args.embedding_model,
         ) if args.mode != "timeline" else retrieve_message_timeline(
             args.run_dir.resolve(),
             args.query,
@@ -65,13 +80,16 @@ def main(argv: list[str] | None = None) -> int:
         _safe_print_error(f"error: {exc}")
         return 2
 
-    _safe_print(render_results_summary(args.run_dir.resolve(), args.query, args.mode, filters, results))
+    _safe_print(render_results_summary(args.run_dir.resolve(), args.query, args.mode, args.channel, filters, results))
 
     if args.json_out:
         payload = {
             "run_dir": str(args.run_dir.resolve()),
             "query": args.query,
             "mode": args.mode,
+            "channel": args.channel,
+            "embedding_model": args.embedding_model,
+            "semantic_top_k": args.semantic_top_k,
             "filters": filters.__dict__,
             "result_count": len(results),
             "results": [result.to_dict() for result in results],
@@ -92,6 +110,7 @@ def render_results_summary(
     run_dir: Path,
     query: str,
     mode: str,
+    channel: str,
     filters: RetrievalFilters,
     results: tuple[object, ...],
 ) -> str:
@@ -100,6 +119,7 @@ def render_results_summary(
         f"run_dir: {run_dir}",
         f"query: {query}",
         f"mode: {mode}",
+        f"channel: {channel}",
         f"filters: {render_filters(filters)}",
         f"result_count: {len(results)}",
     ]
@@ -126,7 +146,11 @@ def _render_window_result(result: object) -> list[str]:
         f"  focal_message_id: {result.focal_message_id} sequence_index={result.focal_sequence_index}",
         "  ranking: "
         f"mode={result.match_basis.get('retrieval_mode')} "
+        f"channel={result.match_basis.get('retrieval_channel')} "
+        f"sources={result.match_basis.get('retrieval_sources')} "
         f"relevance_score={result.match_basis['scoring_features'].get('relevance_score')} "
+        f"bm25_score={result.match_basis['scoring_features'].get('bm25_score')} "
+        f"semantic_similarity={result.match_basis['scoring_features'].get('semantic_similarity')} "
         f"recency_boost={result.match_basis['scoring_features'].get('recency_boost')} "
         f"basis={result.match_basis['scoring_features'].get('chronological_rank_basis')}",
         "  query_inputs: "
@@ -157,8 +181,11 @@ def _render_timeline_result(result: object) -> list[str]:
         f"  author_role: {result.author_role}",
         "  ranking: "
         f"mode={result.match_basis.get('retrieval_mode')} "
+        f"sources={result.match_basis.get('retrieval_sources')} "
         f"basis={result.match_basis['scoring_features'].get('chronological_rank_basis')} "
-        f"relevance_score={result.match_basis['scoring_features'].get('relevance_score')}",
+        f"relevance_score={result.match_basis['scoring_features'].get('relevance_score')} "
+        f"bm25_score={result.match_basis['scoring_features'].get('bm25_score')} "
+        f"semantic_similarity={result.match_basis['scoring_features'].get('semantic_similarity')}",
         "  query_inputs: "
         f"terms={result.match_basis.get('scoring_terms')} "
         f"phrases={result.match_basis.get('normalized_phrase_targets')}",

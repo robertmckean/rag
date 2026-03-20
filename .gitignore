@@ -33,3 +33,4 @@ tests/claude_sidecar*/
 codex_logs/
 history/History_Claude/analyze_claude_export.py
 history/History_Claude/claude_analysis.json
+data/normalized/runs/*/message_embeddings.jsonl
