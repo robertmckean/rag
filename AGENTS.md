@@ -12,12 +12,15 @@ plus deterministic answer evaluation over a single normalized run.
 
 ## Project Status
 
-- Active milestone: Phase 3A grounded answers and deterministic evaluation
+- Active milestone: Phase 3 grounded answers stabilization
 - Phase 1 normalization is complete and its output contract is frozen
 - Phase 2 currently supports BM25 lexical retrieval, contextual window results,
   timeline exploration, query normalization, and chronological retrieval modes
 - Phase 3A currently supports deterministic grounded answers, answer-status
   classification, citation assembly, and a benchmark eval harness
+- Phase 3A supports an opt-in `conversational_memory` grounding mode for
+  same-window local evidence composition
+- Phase 3B supports constrained LLM-backed answer synthesis via `--llm`
 - Prefer the current code in `src/rag/` and the run artifacts under
   `data/normalized/runs/` over older notes or ad hoc local files
 

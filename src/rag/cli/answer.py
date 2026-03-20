@@ -6,7 +6,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from rag.answering.answer import ANSWER_RETRIEVAL_MODES, answer_query, answer_result_json, render_answer_result
+from rag.answering.answer import (
+    ANSWER_RETRIEVAL_MODES,
+    GROUNDING_MODES,
+    answer_query,
+    answer_result_json,
+    render_answer_result,
+)
 
 
 # The answer CLI is a review surface for grounded answers rather than a chat interface.
@@ -25,8 +31,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="relevance",
         help="Retrieval ordering mode used to gather evidence.",
     )
+    parser.add_argument(
+        "--grounding-mode",
+        choices=GROUNDING_MODES,
+        default="strict",
+        help="Grounding policy used to qualify evidence after retrieval.",
+    )
     parser.add_argument("--limit", type=int, default=8, help="Maximum number of retrieval results to inspect.")
     parser.add_argument("--max-evidence", type=int, default=5, help="Maximum number of evidence items to keep.")
+    parser.add_argument("--llm", action="store_true", help="Enable constrained LLM-backed answer synthesis.")
+    parser.add_argument("--llm-model", type=str, default=None, help="Optional OpenAI model override for --llm mode.")
     parser.add_argument("--json", action="store_true", help="Print the answer result as structured JSON.")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional path for structured JSON output.")
     return parser
@@ -40,8 +54,11 @@ def main(argv: list[str] | None = None) -> int:
             args.run_dir.resolve(),
             args.query,
             retrieval_mode=args.retrieval_mode,
+            grounding_mode=args.grounding_mode,
             limit=args.limit,
             max_evidence=args.max_evidence,
+            llm=args.llm,
+            llm_model=args.llm_model,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         _safe_print_error(f"error: {exc}")

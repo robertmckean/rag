@@ -4,6 +4,7 @@ import shutil
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from rag.cli.answer import main
 
@@ -83,8 +84,70 @@ class AnswerCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(stderr_value, "")
         self.assertIn("Grounded Answer", stdout_value)
+        self.assertIn("grounding_mode: strict", stdout_value)
         self.assertIn("answer_status: ambiguous", stdout_value)
         self.assertIn("citations:", stdout_value)
+
+    # Verify that the CLI wires --llm, --llm-model, and --grounding-mode through to the answer pipeline.
+    def test_answer_cli_wires_llm_and_grounding_flags(self) -> None:
+        with patch("rag.cli.answer.answer_query") as mocked_answer_query:
+            mocked_answer_query.return_value = type(
+                "StubAnswerResult",
+                (),
+                {
+                    "to_dict": lambda self: {
+                        "request": {"grounding_mode": "conversational_memory"},
+                        "query": "burnout",
+                        "answer_status": "supported",
+                        "answer": "stub",
+                        "evidence_used": [],
+                        "gaps": [],
+                        "conflicts": [],
+                        "citations": [],
+                        "retrieval_summary": {
+                            "run_id": "stub-run",
+                            "retrieval_mode": "relevance",
+                            "retrieval_limit": 8,
+                            "retrieved_result_count": 1,
+                            "evidence_used_count": 1,
+                        },
+                        "diagnostics": {
+                            "focus_terms": [],
+                            "selected_evidence_count": 0,
+                            "qualified_evidence_count": 0,
+                            "support_basis": None,
+                            "composition_used": False,
+                            "supporting_excerpt_count": 0,
+                            "user_excerpt_count": 0,
+                            "assistant_excerpt_count": 0,
+                            "coverage_terms": [],
+                            "coverage_ratio": 0.0,
+                            "window_id": None,
+                            "status_reason": None,
+                            "rejected_evidence": [],
+                        },
+                    }
+                },
+            )()
+            exit_code, stdout_value, stderr_value = self._run_cli(
+                "--run-dir",
+                str(self.run_dir),
+                "--query",
+                "burnout",
+                "--grounding-mode",
+                "conversational_memory",
+                "--llm",
+                "--llm-model",
+                "gpt-5-mini",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr_value, "")
+        self.assertTrue(stdout_value)
+        self.assertTrue(mocked_answer_query.call_args.kwargs["llm"])
+        self.assertEqual(mocked_answer_query.call_args.kwargs["llm_model"], "gpt-5-mini")
+        self.assertEqual(mocked_answer_query.call_args.kwargs["grounding_mode"], "conversational_memory")
 
 
 if __name__ == "__main__":

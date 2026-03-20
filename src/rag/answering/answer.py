@@ -7,11 +7,14 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from rag.answering.generator_llm import LLMSynthesisRequest, synthesize_answer_with_llm
 from rag.answering.models import (
+    AnswerDiagnostics,
     AnswerRequest,
     AnswerResult,
     AnswerStatus,
     Citation,
+    EvidenceQualificationDiagnostic,
     EvidenceItem,
     RetrievalSummary,
 )
@@ -25,10 +28,13 @@ from rag.retrieval.utils import string_or_none
 # Status is classified before answer text generation so the generator cannot smooth over uncertainty.
 
 ANSWER_RETRIEVAL_MODES = ("relevance", "newest", "oldest")
+GROUNDING_MODES = ("strict", "conversational_memory")
+DEFAULT_GROUNDING_MODE = "strict"
 DEFAULT_EVIDENCE_CAP = 5
 MAX_EVIDENCE_PER_RESULT = 2
 MAX_EXCERPT_LENGTH = 180
 MIN_SUPPORT_SCORE = 0.5
+COMPOSED_SUPPORT_COVERAGE_THRESHOLD = 0.75
 QUESTION_STOPWORDS = frozenset(
     {
         "about",
@@ -61,25 +67,47 @@ class _StatusDecision:
     focus_terms: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _QualificationOutcome:
+    evidence_items: tuple[EvidenceItem, ...]
+    support_basis: str | None
+    composition_used: bool
+    supporting_excerpt_count: int
+    user_excerpt_count: int
+    assistant_excerpt_count: int
+    coverage_terms: tuple[str, ...]
+    coverage_ratio: float
+    window_id: str | None
+    status_reason: str | None
+
+
 # Answer one natural-language query against a single normalized run using existing retrieval behavior.
 def answer_query(
     run_dir: Path,
     query: str,
     *,
     retrieval_mode: str = "relevance",
+    grounding_mode: str = DEFAULT_GROUNDING_MODE,
     limit: int = 8,
     max_evidence: int = DEFAULT_EVIDENCE_CAP,
     filters: RetrievalFilters | None = None,
+    llm: bool = False,
+    llm_model: str | None = None,
 ) -> AnswerResult:
     if retrieval_mode not in ANSWER_RETRIEVAL_MODES:
         raise ValueError(
             f"Unsupported answer retrieval mode: {retrieval_mode}. Supported modes: {', '.join(ANSWER_RETRIEVAL_MODES)}."
+        )
+    if grounding_mode not in GROUNDING_MODES:
+        raise ValueError(
+            f"Unsupported grounding mode: {grounding_mode}. Supported modes: {', '.join(GROUNDING_MODES)}."
         )
 
     request = AnswerRequest(
         run_dir=str(run_dir.resolve()),
         query=query,
         retrieval_mode=retrieval_mode,
+        grounding_mode=grounding_mode,
         limit=limit,
         max_evidence=max_evidence,
     )
@@ -91,27 +119,35 @@ def answer_query(
         filters=filters,
     )
     selected_evidence = _select_evidence(retrieval_results, query, max_evidence=max_evidence)
-    qualified_evidence = _qualify_evidence_items(query, selected_evidence)
-    decision = _classify_answer_status(query, qualified_evidence)
-    citations = _collect_citations(qualified_evidence)
+    qualification = _qualify_evidence_items(query, selected_evidence, grounding_mode=grounding_mode)
+    diagnostics = _build_answer_diagnostics(query, selected_evidence, qualification)
+    decision = _classify_answer_status(query, qualification)
+    decision = _refine_insufficient_evidence_wording(decision, diagnostics)
+    citations = _collect_citations(qualification.evidence_items)
     retrieval_summary = RetrievalSummary(
         run_id=_infer_run_id(run_dir, retrieval_results),
         retrieval_mode=retrieval_mode,
         retrieval_limit=limit,
         retrieved_result_count=len(retrieval_results),
-        evidence_used_count=len(qualified_evidence),
+        evidence_used_count=len(qualification.evidence_items),
     )
-    answer_text = _generate_answer_text(decision, qualified_evidence)
-    return AnswerResult(
+    answer_text = _generate_answer_text(decision, qualification.evidence_items, diagnostics)
+    result = AnswerResult(
         request=request,
         query=query,
         answer_status=decision.status,
         answer=answer_text,
-        evidence_used=qualified_evidence,
+        evidence_used=qualification.evidence_items,
         gaps=decision.gaps,
         conflicts=decision.conflicts,
         citations=citations,
         retrieval_summary=retrieval_summary,
+        diagnostics=diagnostics,
+    )
+    return _apply_optional_llm_synthesis(
+        result,
+        llm=llm,
+        llm_model=llm_model,
     )
 
 
@@ -121,6 +157,7 @@ def render_answer_result(result: AnswerResult) -> str:
         "Grounded Answer",
         f"query: {result.query}",
         f"retrieval_mode: {result.retrieval_summary.retrieval_mode}",
+        f"grounding_mode: {result.request.grounding_mode}",
         f"answer_status: {result.answer_status.value}",
         f"answer: {result.answer}",
     ]
@@ -149,12 +186,65 @@ def render_answer_result(result: AnswerResult) -> str:
         f"retrieved_result_count={result.retrieval_summary.retrieved_result_count} "
         f"evidence_used_count={result.retrieval_summary.evidence_used_count}"
     )
+    if result.diagnostics.support_basis:
+        lines.append(
+            "diagnostics: "
+            f"support_basis={result.diagnostics.support_basis} "
+            f"composition_used={result.diagnostics.composition_used} "
+            f"coverage_ratio={result.diagnostics.coverage_ratio}"
+        )
     return "\n".join(lines)
 
 
 # Serialize one answer result deterministically for JSON output or tests.
 def answer_result_json(result: AnswerResult) -> str:
     return json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+
+
+# Optionally rewrite the deterministic answer text with constrained LLM synthesis after Phase 3A is complete.
+def _apply_optional_llm_synthesis(
+    result: AnswerResult,
+    *,
+    llm: bool,
+    llm_model: str | None,
+) -> AnswerResult:
+    if not llm:
+        return result
+    if not result.evidence_used:
+        return result
+
+    try:
+        synthesis = synthesize_answer_with_llm(
+            LLMSynthesisRequest(
+                query=result.query,
+                answer_status=result.answer_status,
+                evidence_items=result.evidence_used,
+                gaps=result.gaps,
+                conflicts=result.conflicts,
+                model=llm_model,
+            )
+        )
+    except Exception:
+        return result
+
+    citations_by_id = {f"e{item.rank}": item.citation for item in result.evidence_used}
+    synthesized_citations = tuple(
+        citations_by_id[citation_id]
+        for citation_id in synthesis.citation_ids
+        if citation_id in citations_by_id
+    )
+    return AnswerResult(
+        request=result.request,
+        query=result.query,
+        answer_status=result.answer_status,
+        answer=synthesis.answer_text,
+        evidence_used=result.evidence_used,
+        gaps=result.gaps,
+        conflicts=result.conflicts,
+        citations=synthesized_citations or result.citations,
+        retrieval_summary=result.retrieval_summary,
+        diagnostics=result.diagnostics,
+    )
 
 
 # Select compact evidence items from ranked retrieval windows in stable rank order.
@@ -177,6 +267,7 @@ def _select_evidence(results: tuple[object, ...], query: str, *, max_evidence: i
                 EvidenceItem(
                     rank=len(evidence_items) + 1,
                     source_result_rank=int(getattr(result, "rank", len(evidence_items) + 1)),
+                    window_id=string_or_none(getattr(result, "result_id", None)) or f"window:{getattr(result, 'rank', len(evidence_items) + 1)}",
                     score=float(getattr(result, "score", 0.0)),
                     retrieval_mode=string_or_none(getattr(result, "match_basis", {}).get("retrieval_mode")) or "relevance",
                     author_role=string_or_none(message.get("author_role")),
@@ -202,9 +293,95 @@ def _select_evidence(results: tuple[object, ...], query: str, *, max_evidence: i
     return tuple(evidence_items)
 
 
-# Classify the answer status deterministically before any answer prose is generated.
-def _classify_answer_status(query: str, evidence_items: tuple[EvidenceItem, ...]) -> _StatusDecision:
+# Record which selected evidence items were dropped and why so grounded-answer failures stay inspectable.
+def _build_answer_diagnostics(
+    query: str,
+    selected_evidence: tuple[EvidenceItem, ...],
+    qualification: _QualificationOutcome,
+) -> AnswerDiagnostics:
     focus_terms = _focus_terms(query)
+    qualified_message_ids = {item.citation.message_id for item in qualification.evidence_items}
+    rejected_items: list[EvidenceQualificationDiagnostic] = []
+    requires_combined_support = _requires_combined_focus_support(query, focus_terms)
+
+    for item in selected_evidence:
+        if item.citation.message_id in qualified_message_ids:
+            continue
+        missing_focus_terms = tuple(term for term in focus_terms if term not in item.matched_terms)
+        rejection_reasons: list[str] = []
+        if not item.matched_terms:
+            rejection_reasons.append("insufficient_directness")
+        if item.score < MIN_SUPPORT_SCORE:
+            rejection_reasons.append("filtered_by_threshold")
+        if item.author_role == "assistant":
+            if _is_speculative_excerpt(item.citation.excerpt):
+                rejection_reasons.append("assistant_authored_speculation")
+            if not _has_grounding_peer(item, selected_evidence):
+                rejection_reasons.append("missing_non_assistant_grounding")
+        if qualification.composition_used and qualification.window_id and item.window_id != qualification.window_id:
+            rejection_reasons.append("outside_selected_support_window")
+        if requires_combined_support and not _has_combined_focus_support((item,), focus_terms):
+            rejection_reasons.append("combined_concept_not_supported")
+        if not rejection_reasons and item.matched_terms:
+            rejection_reasons.append("window_coverage_below_threshold")
+        if not rejection_reasons:
+            rejection_reasons.append("filtered_by_group_qualification")
+        rejected_items.append(
+            EvidenceQualificationDiagnostic(
+                message_id=item.citation.message_id,
+                source_result_rank=item.source_result_rank,
+                author_role=item.author_role,
+                matched_terms=item.matched_terms,
+                missing_focus_terms=missing_focus_terms,
+                rejection_reasons=tuple(rejection_reasons),
+                excerpt=item.citation.excerpt,
+            )
+        )
+
+    return AnswerDiagnostics(
+        focus_terms=focus_terms,
+        selected_evidence_count=len(selected_evidence),
+        qualified_evidence_count=len(qualification.evidence_items),
+        support_basis=qualification.support_basis,
+        composition_used=qualification.composition_used,
+        supporting_excerpt_count=qualification.supporting_excerpt_count,
+        user_excerpt_count=qualification.user_excerpt_count,
+        assistant_excerpt_count=qualification.assistant_excerpt_count,
+        coverage_terms=qualification.coverage_terms,
+        coverage_ratio=qualification.coverage_ratio,
+        window_id=qualification.window_id,
+        status_reason=qualification.status_reason,
+        rejected_evidence=tuple(rejected_items),
+    )
+
+
+# Distinguish between retrieval miss and qualification failure so insufficiency gaps stay accurate.
+def _refine_insufficient_evidence_wording(
+    decision: _StatusDecision,
+    diagnostics: AnswerDiagnostics,
+) -> _StatusDecision:
+    if decision.status is not AnswerStatus.INSUFFICIENT_EVIDENCE:
+        return decision
+    if diagnostics.selected_evidence_count <= 0 or diagnostics.qualified_evidence_count > 0:
+        return decision
+    if diagnostics.composition_used:
+        gap = "Relevant retrieval candidates were found, but the composed support stayed too weak to justify a grounded answer."
+    elif any("combined_concept_not_supported" in item.rejection_reasons for item in diagnostics.rejected_evidence):
+        gap = "Relevant retrieval candidates were found, but none directly supported the full combined query concept after evidence qualification."
+    else:
+        gap = "Relevant retrieval candidates were found, but none met the evidence qualification rules for this question."
+    return _StatusDecision(
+        status=decision.status,
+        gaps=(gap,),
+        conflicts=decision.conflicts,
+        focus_terms=decision.focus_terms,
+    )
+
+
+# Classify the answer status deterministically before any answer prose is generated.
+def _classify_answer_status(query: str, qualification: _QualificationOutcome) -> _StatusDecision:
+    focus_terms = _focus_terms(query)
+    evidence_items = qualification.evidence_items
     if not evidence_items:
         return _StatusDecision(
             status=AnswerStatus.INSUFFICIENT_EVIDENCE,
@@ -228,6 +405,15 @@ def _classify_answer_status(query: str, evidence_items: tuple[EvidenceItem, ...]
             status=AnswerStatus.AMBIGUOUS,
             gaps=(),
             conflicts=conflicts,
+            focus_terms=focus_terms,
+        )
+
+    if qualification.composition_used:
+        gaps = ("Support is distributed across multiple nearby excerpts within one retrieved conversation window.",)
+        return _StatusDecision(
+            status=AnswerStatus.PARTIALLY_SUPPORTED,
+            gaps=gaps,
+            conflicts=(),
             focus_terms=focus_terms,
         )
 
@@ -276,39 +462,64 @@ def _classify_answer_status(query: str, evidence_items: tuple[EvidenceItem, ...]
 
 
 # Drop selected evidence that does not directly address any meaningful normalized query term.
-def _qualify_evidence_items(query: str, evidence_items: tuple[EvidenceItem, ...]) -> tuple[EvidenceItem, ...]:
+def _qualify_evidence_items(
+    query: str,
+    evidence_items: tuple[EvidenceItem, ...],
+    *,
+    grounding_mode: str,
+) -> _QualificationOutcome:
     focus_terms = _focus_terms(query)
     qualified_items: list[EvidenceItem] = []
     for item in evidence_items:
         if _is_qualified_evidence_item(item, focus_terms, evidence_items):
             qualified_items.append(item)
-    if _requires_combined_focus_support(query, focus_terms) and not _has_combined_focus_support(tuple(qualified_items), focus_terms):
-        return ()
-    ordered_items = sorted(
-        qualified_items,
-        key=lambda item: (
-            -len(item.matched_terms),
-            1 if item.author_role == "assistant" else 0,
-            -item.score,
-            item.rank,
-        ),
-    )
-    return tuple(
-        EvidenceItem(
-            rank=index,
-            source_result_rank=item.source_result_rank,
-            score=item.score,
-            retrieval_mode=item.retrieval_mode,
-            author_role=item.author_role,
-            matched_terms=item.matched_terms,
-            citation=item.citation,
+    ordered_items = _re_rank_evidence_items(tuple(qualified_items))
+    requires_combined_support = _requires_combined_focus_support(query, focus_terms)
+    if _has_combined_focus_support(ordered_items, focus_terms):
+        return _qualification_outcome_from_items(
+            ordered_items,
+            support_basis="single_excerpt",
+            composition_used=False,
+            coverage_terms=tuple(sorted({term for item in ordered_items for term in item.matched_terms})),
+            coverage_ratio=_coverage_ratio(tuple(sorted({term for item in ordered_items for term in item.matched_terms})), focus_terms),
+            window_id=ordered_items[0].window_id if ordered_items else None,
+            status_reason="single_excerpt_support",
         )
-        for index, item in enumerate(ordered_items, start=1)
+    if grounding_mode == "strict":
+        if requires_combined_support:
+            return _empty_qualification_outcome(status_reason="combined_concept_not_supported")
+        return _qualification_outcome_from_items(
+            ordered_items,
+            support_basis="single_excerpt" if ordered_items else None,
+            composition_used=False,
+            coverage_terms=tuple(sorted({term for item in ordered_items for term in item.matched_terms})),
+            coverage_ratio=_coverage_ratio(tuple(sorted({term for item in ordered_items for term in item.matched_terms})), focus_terms),
+            window_id=ordered_items[0].window_id if ordered_items else None,
+            status_reason="strict_partial_support" if ordered_items else "no_qualified_evidence",
+        )
+
+    composed_outcome = _qualify_window_composed_support(query, evidence_items)
+    if composed_outcome is not None:
+        return composed_outcome
+    if requires_combined_support:
+        return _empty_qualification_outcome(status_reason="combined_concept_not_supported")
+    return _qualification_outcome_from_items(
+        ordered_items,
+        support_basis="single_excerpt" if ordered_items else None,
+        composition_used=False,
+        coverage_terms=tuple(sorted({term for item in ordered_items for term in item.matched_terms})),
+        coverage_ratio=_coverage_ratio(tuple(sorted({term for item in ordered_items for term in item.matched_terms})), focus_terms),
+        window_id=ordered_items[0].window_id if ordered_items else None,
+        status_reason="strict_partial_support" if ordered_items else "no_qualified_evidence",
     )
 
 
 # Generate deterministic grounded answer prose from the selected evidence and precomputed status.
-def _generate_answer_text(decision: _StatusDecision, evidence_items: tuple[EvidenceItem, ...]) -> str:
+def _generate_answer_text(
+    decision: _StatusDecision,
+    evidence_items: tuple[EvidenceItem, ...],
+    diagnostics: AnswerDiagnostics,
+) -> str:
     primary_excerpt = evidence_items[0].citation.excerpt if evidence_items else None
     secondary_excerpt = evidence_items[1].citation.excerpt if len(evidence_items) > 1 else None
 
@@ -329,6 +540,18 @@ def _generate_answer_text(decision: _StatusDecision, evidence_items: tuple[Evide
             )
         return "The retrieved evidence is mixed and does not support a single unqualified answer."
     if decision.status is AnswerStatus.PARTIALLY_SUPPORTED:
+        if diagnostics.composition_used and primary_excerpt and secondary_excerpt:
+            return (
+                "The retrieved evidence only partially answers the question. "
+                "Support is distributed across multiple nearby excerpts within one conversation window, including "
+                f'"{primary_excerpt}" and "{secondary_excerpt}".'
+            )
+        if diagnostics.composition_used and primary_excerpt:
+            return (
+                "The retrieved evidence only partially answers the question. "
+                "Support is distributed across nearby excerpts within one conversation window, including "
+                f'"{primary_excerpt}".'
+            )
         if primary_excerpt:
             return (
                 "The retrieved evidence only partially answers the question. "
@@ -348,6 +571,139 @@ def _generate_answer_text(decision: _StatusDecision, evidence_items: tuple[Evide
     return "Based on the retrieved conversation evidence, the available support is limited but relevant."
 
 
+# Re-rank evidence items deterministically after qualification narrows the candidate set.
+def _re_rank_evidence_items(evidence_items: tuple[EvidenceItem, ...]) -> tuple[EvidenceItem, ...]:
+    ordered_items = sorted(
+        evidence_items,
+        key=lambda item: (
+            -len(item.matched_terms),
+            1 if item.author_role == "assistant" else 0,
+            -item.score,
+            item.rank,
+        ),
+    )
+    return tuple(
+        EvidenceItem(
+            rank=index,
+            source_result_rank=item.source_result_rank,
+            window_id=item.window_id,
+            score=item.score,
+            retrieval_mode=item.retrieval_mode,
+            author_role=item.author_role,
+            matched_terms=item.matched_terms,
+            citation=item.citation,
+        )
+        for index, item in enumerate(ordered_items, start=1)
+    )
+
+
+# Build a stable empty qualification outcome when no evidence survives the current grounding policy.
+def _empty_qualification_outcome(*, status_reason: str) -> _QualificationOutcome:
+    return _QualificationOutcome(
+        evidence_items=(),
+        support_basis=None,
+        composition_used=False,
+        supporting_excerpt_count=0,
+        user_excerpt_count=0,
+        assistant_excerpt_count=0,
+        coverage_terms=(),
+        coverage_ratio=0.0,
+        window_id=None,
+        status_reason=status_reason,
+    )
+
+
+# Convert a set of qualifying items into the standard qualification outcome shape.
+def _qualification_outcome_from_items(
+    evidence_items: tuple[EvidenceItem, ...],
+    *,
+    support_basis: str | None,
+    composition_used: bool,
+    coverage_terms: tuple[str, ...],
+    coverage_ratio: float,
+    window_id: str | None,
+    status_reason: str,
+) -> _QualificationOutcome:
+    user_excerpt_count = sum(1 for item in evidence_items if item.author_role == "user")
+    assistant_excerpt_count = sum(1 for item in evidence_items if item.author_role == "assistant")
+    window_ids = {item.window_id for item in evidence_items if item.window_id}
+    return _QualificationOutcome(
+        evidence_items=evidence_items,
+        support_basis=support_basis,
+        composition_used=composition_used,
+        supporting_excerpt_count=len(evidence_items),
+        user_excerpt_count=user_excerpt_count,
+        assistant_excerpt_count=assistant_excerpt_count,
+        coverage_terms=coverage_terms,
+        coverage_ratio=coverage_ratio,
+        window_id=window_id if len(window_ids) <= 1 else None,
+        status_reason=status_reason,
+    )
+
+
+# Qualify one window for conversational-memory composition using only same-window lexical coverage.
+def _qualify_window_composed_support(
+    query: str,
+    evidence_items: tuple[EvidenceItem, ...],
+) -> _QualificationOutcome | None:
+    focus_terms = _focus_terms(query)
+    if not evidence_items or not focus_terms:
+        return None
+
+    grouped_items: dict[str, list[EvidenceItem]] = {}
+    for item in evidence_items:
+        window_key = item.window_id or f"window:{item.source_result_rank}"
+        grouped_items.setdefault(window_key, []).append(item)
+
+    sorted_window_keys = sorted(
+        grouped_items,
+        key=lambda window_key: min(item.source_result_rank for item in grouped_items[window_key]),
+    )
+    for window_key in sorted_window_keys:
+        window_items = tuple(grouped_items[window_key])
+        contributors = tuple(item for item in window_items if _is_window_contributing_item(item))
+        if len(contributors) < 2:
+            continue
+        coverage_terms = tuple(sorted({term for item in contributors for term in item.matched_terms}))
+        coverage_ratio = _coverage_ratio(coverage_terms, focus_terms)
+        user_contributors = tuple(item for item in contributors if item.author_role == "user")
+        user_excerpt_count = len(user_contributors)
+        user_coverage_terms = tuple(sorted({term for item in user_contributors for term in item.matched_terms}))
+        user_coverage_ratio = _coverage_ratio(user_coverage_terms, focus_terms)
+        if coverage_ratio < COMPOSED_SUPPORT_COVERAGE_THRESHOLD or user_excerpt_count < 1:
+            continue
+        if user_coverage_ratio < COMPOSED_SUPPORT_COVERAGE_THRESHOLD:
+            continue
+        return _qualification_outcome_from_items(
+            _re_rank_evidence_items(contributors),
+            support_basis="window_composed",
+            composition_used=True,
+            coverage_terms=coverage_terms,
+            coverage_ratio=coverage_ratio,
+            window_id=window_key,
+            status_reason="window_composed_support",
+        )
+    return None
+
+
+# Treat an item as a composition contributor only when it adds direct grounded term coverage inside one window.
+def _is_window_contributing_item(item: EvidenceItem) -> bool:
+    if item.score < MIN_SUPPORT_SCORE:
+        return False
+    if not item.matched_terms:
+        return False
+    if item.author_role == "assistant" and _is_speculative_excerpt(item.citation.excerpt):
+        return False
+    return True
+
+
+# Compute the ratio of meaningful query-term coverage supplied by one support unit.
+def _coverage_ratio(coverage_terms: tuple[str, ...], focus_terms: tuple[str, ...]) -> float:
+    if not focus_terms:
+        return 0.0
+    return len(set(coverage_terms) & set(focus_terms)) / len(set(focus_terms))
+
+
 # Deduplicate citations by message id while preserving evidence order.
 def _collect_citations(evidence_items: tuple[EvidenceItem, ...]) -> tuple[Citation, ...]:
     citations: list[Citation] = []
@@ -363,7 +719,7 @@ def _collect_citations(evidence_items: tuple[EvidenceItem, ...]) -> tuple[Citati
 # Extract the most topical query terms for answer-status reasoning instead of reusing raw retrieval tokens directly.
 def _focus_terms(query: str) -> tuple[str, ...]:
     parsed = parse_query(query)
-    candidates = parsed.stopword_filtered_terms or parsed.normalized_query_terms
+    candidates = parsed.scoring_terms or parsed.stopword_filtered_terms or parsed.normalized_query_terms
     # Ignore one-character tokenization artifacts such as possessive "'s" fragments.
     filtered = tuple(
         term

@@ -131,6 +131,9 @@ The other retrieval modes return contextual message windows.
 
 Current grounded-answer capabilities:
 - deterministic answer generation over a single normalized run
+- explicit grounding modes:
+  - `strict` (default)
+  - `conversational_memory` for same-window local evidence composition
 - explicit answer status:
   - `supported`
   - `partially_supported`
@@ -147,6 +150,7 @@ raise SystemExit(main([
   '--run-dir', 'data/normalized/runs/<run_id>',
   '--query', 'What have I said about burnout?',
   '--retrieval-mode', 'relevance',
+  '--grounding-mode', 'strict',
   '--limit', '8',
   '--max-evidence', '5'
 ]))
@@ -167,4 +171,5 @@ raise SystemExit(main([
 Grounded-answer constraints:
 - retrieval remains the source of available evidence
 - answer generation is deterministic and template-based
+- conversational-memory composition is opt-in and stays within one retrieved window
 - no LLM calls, embeddings, vector DBs, or cross-run federation in this phase

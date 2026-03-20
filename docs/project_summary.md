@@ -10,7 +10,9 @@ The repository now has three active layers:
 - Phase 2 retrieval:
   local lexical retrieval over one normalized run using BM25 scoring, contextual message windows, chronological retrieval modes, and timeline exploration
 - Phase 3A grounded answers:
-  deterministic answer generation, explicit answer status, citation assembly, and deterministic benchmark evaluation
+  deterministic answer generation, explicit answer status, citation assembly,
+  deterministic benchmark evaluation, and an opt-in `conversational_memory`
+  grounding mode for same-window local evidence composition
 
 ## Source Of Truth
 
@@ -50,6 +52,7 @@ other modes return contextual message windows around focal matches.
 ## Current Answering/Eval Scope
 
 - `rag.cli.answer` produces deterministic grounded answers for a single run
+- `rag.cli.answer` supports `--grounding-mode strict|conversational_memory`
 - answer statuses are:
   - `supported`
   - `partially_supported`

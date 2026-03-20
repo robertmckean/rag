@@ -63,6 +63,7 @@ python -m rag.cli.answer \
   --run-dir data/normalized/runs/<run_id> \
   --query "What have I said about burnout?" \
   --retrieval-mode relevance \
+  --grounding-mode strict \
   --limit 8 \
   --max-evidence 5
 ```
@@ -75,6 +76,7 @@ Required:
 
 Optional:
 - `--retrieval-mode relevance|newest|oldest` (default: relevance)
+- `--grounding-mode strict|conversational_memory` (default: strict)
 - `--limit`
 - `--max-evidence` (default: 5)
 - `--json`
@@ -100,6 +102,7 @@ src/rag/cli/
 - grounded answers produced  
 - explicit status classification  
 - citations are correct and traceable  
+- conversational-memory composition is explicit opt-in and stays within one retrieved window  
 - no unsupported claims  
 - ambiguity and gaps surfaced  
 - tests pass  
