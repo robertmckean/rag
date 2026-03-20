@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +14,13 @@ from rag.retrieval.read_model import LoadedRun, load_normalized_run, normalize_l
 # Ranking is message-first because message text is the narrowest useful relevance signal.
 # Returned results are contextual windows so humans and LLMs can see local conversation flow.
 # The contract keeps scoring details explicit so retrieval behavior is easy to debug.
+
+
+# BM25 constants stay explicit so ranking can be tuned without changing the retrieval contract.
+BM25_K1 = 1.5
+BM25_B = 0.75
+EXACT_PHRASE_BOOST = 1.5
+TITLE_TERM_BOOST = 0.35
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,87 @@ class _Candidate:
     message_id: str
     created_at: str | None
     match_basis: dict[str, object]
+
+
+# Hold the per-run statistics and scoring helpers for BM25 message ranking.
+@dataclass(frozen=True)
+class _BM25Scorer:
+    query_terms: tuple[str, ...]
+    document_count: int
+    average_document_length: float
+    document_frequency_by_term: dict[str, int]
+    document_length_by_message_id: dict[str, int]
+    term_frequency_by_message_id: dict[str, Counter[str]]
+
+
+# Build the BM25 scorer over the already-loaded normalized run.
+def _build_bm25_scorer(loaded_run: LoadedRun, query_terms: tuple[str, ...]) -> _BM25Scorer:
+    document_frequency_by_term: dict[str, int] = {}
+    document_length_by_message_id: dict[str, int] = {}
+    term_frequency_by_message_id: dict[str, Counter[str]] = {}
+
+    for message_id, searchable_text in loaded_run.searchable_text_by_message_id.items():
+        tokens = tokenize_query(searchable_text)
+        term_counts = Counter(tokens)
+        term_frequency_by_message_id[message_id] = term_counts
+        document_length_by_message_id[message_id] = len(tokens)
+
+        for term in set(tokens):
+            document_frequency_by_term[term] = document_frequency_by_term.get(term, 0) + 1
+
+    document_count = len(term_frequency_by_message_id)
+    total_document_length = sum(document_length_by_message_id.values())
+    average_document_length = (total_document_length / document_count) if document_count else 0.0
+
+    return _BM25Scorer(
+        query_terms=query_terms,
+        document_count=document_count,
+        average_document_length=average_document_length,
+        document_frequency_by_term=document_frequency_by_term,
+        document_length_by_message_id=document_length_by_message_id,
+        term_frequency_by_message_id=term_frequency_by_message_id,
+    )
+
+
+# Score one message with BM25 and return both the score and per-term contribution details.
+def _score_message_bm25(
+    scorer: _BM25Scorer,
+    message_id: str,
+) -> tuple[float, list[dict[str, object]]]:
+    document_length = scorer.document_length_by_message_id.get(message_id, 0)
+    term_frequencies = scorer.term_frequency_by_message_id.get(message_id, Counter())
+    if not term_frequencies:
+        return 0.0, []
+
+    contributions: list[dict[str, object]] = []
+    total_score = 0.0
+
+    for term in scorer.query_terms:
+        term_frequency = term_frequencies.get(term, 0)
+        if term_frequency <= 0:
+            continue
+
+        document_frequency = scorer.document_frequency_by_term.get(term, 0)
+        inverse_document_frequency = math.log(
+            1.0 + ((scorer.document_count - document_frequency + 0.5) / (document_frequency + 0.5))
+        )
+        average_document_length = scorer.average_document_length or 1.0
+        length_normalizer = BM25_K1 * (1.0 - BM25_B + BM25_B * (document_length / average_document_length))
+        numerator = term_frequency * (BM25_K1 + 1.0)
+        denominator = term_frequency + length_normalizer
+        contribution = inverse_document_frequency * (numerator / denominator)
+        total_score += contribution
+        contributions.append(
+            {
+                "term": term,
+                "term_frequency": term_frequency,
+                "document_frequency": document_frequency,
+                "inverse_document_frequency": round(inverse_document_frequency, 6),
+                "contribution": round(contribution, 6),
+            }
+        )
+
+    return total_score, contributions
 
 
 # Load a run directory and execute lexical retrieval in one call.
@@ -128,6 +218,7 @@ def _rank_candidates(
     filters: RetrievalFilters,
 ) -> list[_Candidate]:
     candidates: list[_Candidate] = []
+    scorer = _build_bm25_scorer(loaded_run, query_tokens)
     query_token_set = set(query_tokens)
 
     for message_id, message in loaded_run.message_by_id.items():
@@ -138,8 +229,8 @@ def _rank_candidates(
         if not searchable_text:
             continue
 
-        searchable_token_set = set(tokenize_query(searchable_text))
-        overlap_tokens = tuple(sorted(query_token_set & searchable_token_set))
+        bm25_score, term_contributions = _score_message_bm25(scorer, message_id)
+        overlap_tokens = tuple(contribution["term"] for contribution in term_contributions)
         exact_phrase_match = normalized_query in searchable_text
 
         conversation = loaded_run.conversation_by_id.get(_string_or_none(message.get("conversation_id")) or "")
@@ -147,15 +238,14 @@ def _rank_candidates(
         normalized_title = normalize_lexical_text(conversation_title or "")
         title_overlap_tokens = tuple(sorted(query_token_set & set(tokenize_query(normalized_title))))
 
-        token_overlap_score = float(len(overlap_tokens))
-        exact_phrase_boost = 3.0 if exact_phrase_match else 0.0
-        title_boost = 0.5 * len(title_overlap_tokens)
+        exact_phrase_boost = EXACT_PHRASE_BOOST if exact_phrase_match else 0.0
+        title_boost = TITLE_TERM_BOOST * len(title_overlap_tokens)
 
         # Title overlap can boost a real message hit, but it should not create a hit by itself.
-        if token_overlap_score <= 0.0 and exact_phrase_boost <= 0.0:
+        if bm25_score <= 0.0 and exact_phrase_boost <= 0.0:
             continue
 
-        score = token_overlap_score + exact_phrase_boost + title_boost
+        score = bm25_score + exact_phrase_boost + title_boost
         if score <= 0.0:
             continue
 
@@ -170,11 +260,18 @@ def _rank_candidates(
                     "matched_text_terms": list(overlap_tokens),
                     "matched_metadata_filters": _matched_filters_dict(filters),
                     "scoring_features": {
-                        "token_overlap": len(overlap_tokens),
+                        "query_terms": list(query_tokens),
+                        "bm25_k1": BM25_K1,
+                        "bm25_b": BM25_B,
+                        "document_length": scorer.document_length_by_message_id.get(message_id, 0),
+                        "average_document_length": round(scorer.average_document_length, 6),
+                        "bm25_term_contributions": term_contributions,
+                        "bm25_score": round(bm25_score, 6),
                         "exact_phrase_match": exact_phrase_match,
                         "exact_phrase_boost": exact_phrase_boost,
                         "title_overlap": len(title_overlap_tokens),
                         "title_boost": title_boost,
+                        "final_score": round(score, 6),
                     },
                     "focal_match_excerpt": _build_excerpt(message, overlap_tokens),
                 },
