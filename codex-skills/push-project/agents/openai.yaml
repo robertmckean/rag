@@ -1,0 +1,5 @@
+version: 1
+interface:
+  display_name: Push Project
+  short_description: Prepare, version, validate, commit, and push this repo safely
+  default_prompt: Prepare this repository for push using the full pre-push workflow, follow local versioning and environment conventions, then commit and push the intended change set.

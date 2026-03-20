@@ -1,0 +1,144 @@
+[
+  {
+    "conversation_id": "conv-1",
+    "id": "conv-1-fallback",
+    "title": "Sample ChatGPT Conversation",
+    "create_time": 1730649600,
+    "update_time": "2025-02-27T13:53:04.968636Z",
+    "current_node": "assistant-2",
+    "conversation_origin": "chat.openai.com",
+    "default_model_slug": "gpt-4o",
+    "is_archived": false,
+    "is_starred": true,
+    "is_read_only": false,
+    "is_do_not_remember": null,
+    "is_study_mode": true,
+    "mapping": {
+      "root": {
+        "id": "root",
+        "parent": null,
+        "children": ["system-1"],
+        "message": null
+      },
+      "system-1": {
+        "id": "system-1",
+        "parent": "root",
+        "children": ["user-1"],
+        "message": {
+          "id": "msg-system-1",
+          "author": {"role": "system", "name": null, "metadata": {}},
+          "channel": null,
+          "content": {
+            "content_type": "text",
+            "parts": [""]
+          },
+          "create_time": 1730649600,
+          "update_time": 1730649600,
+          "metadata": {"message_type": "system_message"},
+          "status": "finished_successfully"
+        }
+      },
+      "user-1": {
+        "id": "user-1",
+        "parent": "system-1",
+        "children": ["assistant-1"],
+        "message": {
+          "id": "msg-user-1",
+          "author": {"role": "user", "name": "User", "metadata": {}},
+          "channel": "final",
+          "content": {
+            "content_type": "text",
+            "parts": ["Show me this image"]
+          },
+          "create_time": 1730649605,
+          "update_time": 1730649605,
+          "metadata": {
+            "attachments": [
+              {"id": "file-abc", "name": "image.png"}
+            ]
+          },
+          "status": "finished_successfully"
+        }
+      },
+      "assistant-1": {
+        "id": "assistant-1",
+        "parent": "user-1",
+        "children": ["user-2", "branch-unused"],
+        "message": {
+          "id": "msg-assistant-1",
+          "author": {"role": "assistant", "name": null, "metadata": {}},
+          "channel": "final",
+          "content": {
+            "content_type": "multimodal_text",
+            "parts": [
+              "Here is the generated image.",
+              {
+                "content_type": "image_asset_pointer",
+                "asset_pointer": "file-service://file-inline-1",
+                "text": null
+              }
+            ]
+          },
+          "create_time": 1730649610,
+          "update_time": 1730649610,
+          "metadata": {},
+          "status": "finished_successfully"
+        }
+      },
+      "branch-unused": {
+        "id": "branch-unused",
+        "parent": "assistant-1",
+        "children": [],
+        "message": {
+          "id": "msg-branch-unused",
+          "author": {"role": "assistant", "name": null, "metadata": {}},
+          "channel": "final",
+          "content": {
+            "content_type": "text",
+            "parts": ["This branch should not be included."]
+          },
+          "create_time": 1730649611,
+          "update_time": 1730649611,
+          "metadata": {},
+          "status": "finished_successfully"
+        }
+      },
+      "user-2": {
+        "id": "user-2",
+        "parent": "assistant-1",
+        "children": ["assistant-2"],
+        "message": {
+          "id": "msg-user-2",
+          "author": {"role": "user", "name": "User", "metadata": {}},
+          "channel": "final",
+          "content": {
+            "content_type": "text",
+            "parts": ["Thanks"]
+          },
+          "create_time": 1730649615,
+          "update_time": 1730649615,
+          "metadata": {},
+          "status": "finished_successfully"
+        }
+      },
+      "assistant-2": {
+        "id": "assistant-2",
+        "parent": "user-2",
+        "children": [],
+        "message": {
+          "id": "msg-assistant-2",
+          "author": {"role": "assistant", "name": null, "metadata": {}},
+          "channel": "final",
+          "content": {
+            "content_type": "text",
+            "parts": ["You're welcome"]
+          },
+          "create_time": 1730649620,
+          "update_time": 1730649620,
+          "metadata": {},
+          "status": "finished_successfully"
+        }
+      }
+    }
+  }
+]

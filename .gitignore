@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Environments
+.env
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Data (CRITICAL - do not commit raw or normalized data)
+data/raw/
+data/normalized/
+
+# Temp / junk
+tests/**/tmp*
+tests/**/claude_sidecar*
+codex_logs/
+history/History_Claude/analyze_claude_export.py
+history/History_Claude/claude_analysis.json

@@ -1,0 +1,60 @@
+[
+  {
+    "conversation_id": "conv-2",
+    "title": "Second shard conversation",
+    "create_time": "1731000000",
+    "update_time": "2025-02-27T14:00:00+00:00",
+    "current_node": "assistant-final",
+    "conversation_origin": "chat.openai.com",
+    "default_model_slug": "gpt-4o-mini",
+    "is_archived": true,
+    "is_starred": false,
+    "is_read_only": false,
+    "is_do_not_remember": false,
+    "is_study_mode": false,
+    "mapping": {
+      "root-2": {
+        "id": "root-2",
+        "parent": null,
+        "children": ["user-start"],
+        "message": null
+      },
+      "user-start": {
+        "id": "user-start",
+        "parent": "root-2",
+        "children": ["assistant-final"],
+        "message": {
+          "id": "msg-user-start",
+          "author": {"role": "user", "name": "User", "metadata": {}},
+          "channel": "final",
+          "content": {
+            "content_type": "text",
+            "parts": ["Question in second shard"]
+          },
+          "create_time": 1731000000,
+          "update_time": 1731000001,
+          "metadata": {},
+          "status": "finished_successfully"
+        }
+      },
+      "assistant-final": {
+        "id": "assistant-final",
+        "parent": "user-start",
+        "children": [],
+        "message": {
+          "id": "msg-assistant-final",
+          "author": {"role": "assistant", "name": null, "metadata": {}},
+          "channel": "final",
+          "content": {
+            "content_type": "text",
+            "parts": ["Answer in second shard"]
+          },
+          "create_time": 1731000010,
+          "update_time": 1731000010,
+          "metadata": {},
+          "status": "finished_successfully"
+        }
+      }
+    }
+  }
+]

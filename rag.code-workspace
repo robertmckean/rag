@@ -1,0 +1,30 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "C:\\Users\\windo\\anaconda3\\envs\\drum310\\python.exe",
+    "python.condaPath": "C:\\Users\\windo\\anaconda3\\Scripts\\conda.exe",
+    "python.analysis.extraPaths": [
+      "${workspaceFolder}"
+    ],
+    "python.analysis.diagnosticSeverityOverrides": {
+      "reportMissingImports": "none",
+      "reportMissingModuleSource": "none"
+    },
+    "python.terminal.activateEnvironment": true,
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "terminal.integrated.defaultProfile.windows": "drum310",
+    "terminal.integrated.profiles.windows": {
+      "drum310": {
+        "path": "C:\\Windows\\System32\\cmd.exe",
+        "args": [
+          "/k",
+          "C:\\Users\\windo\\anaconda3\\condabin\\conda.bat activate drum310"
+        ]
+      }
+    }
+  }
+}
