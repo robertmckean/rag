@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
+# Re-export from the shared location so existing imports continue to work.
+from rag.utils import string_or_none
 
-# Normalize optional scalar values to trimmed strings where retrieval expects them.
-def string_or_none(value: object) -> str | None:
-    if isinstance(value, str):
-        stripped = value.strip()
-        return stripped or None
-    return None
+__all__ = ["string_or_none"]

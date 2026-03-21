@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import sys
 
+from rag.cli.utils import safe_print, safe_print_error
 from rag.eval.runner import eval_report_json, render_eval_report, run_benchmark
 
 
@@ -31,37 +31,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         summary, case_results = run_benchmark(args.run_dir.resolve(), args.bench.resolve())
     except (FileNotFoundError, OSError, ValueError) as exc:
-        _safe_print_error(f"error: {exc}")
+        safe_print_error(f"error: {exc}")
         return 2
 
     report_json = eval_report_json(summary, case_results)
     if args.json:
-        _safe_print(report_json.rstrip())
+        safe_print(report_json.rstrip())
     else:
-        _safe_print(render_eval_report(summary, case_results, fail_only=args.fail_only))
+        safe_print(render_eval_report(summary, case_results, fail_only=args.fail_only))
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(report_json, encoding="utf-8")
         if not args.json:
-            _safe_print("")
-            _safe_print(f"json_out: {args.json_out.resolve()}")
+            safe_print("")
+            safe_print(f"json_out: {args.json_out.resolve()}")
 
     return 0
-
-
-# Print terminal output with replacement fallback for consoles that cannot encode some text.
-def _safe_print(value: str) -> None:
-    encoding = sys.stdout.encoding or "utf-8"
-    safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
-    print(safe_value)
-
-
-# Print CLI errors to stderr with the same encoding fallback used for normal output.
-def _safe_print_error(value: str) -> None:
-    encoding = sys.stderr.encoding or "utf-8"
-    safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
-    print(safe_value, file=sys.stderr)
 
 
 if __name__ == "__main__":

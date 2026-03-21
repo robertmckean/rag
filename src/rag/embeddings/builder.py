@@ -6,22 +6,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import random
-from typing import Protocol
-import sys
 
-from rag.retrieval.read_model import load_normalized_run
-from rag.retrieval.read_model import tokenize_query
-from rag.retrieval.utils import string_or_none
-
+from rag.cli.utils import safe_print
+from rag.embeddings.client import DEFAULT_EMBEDDING_MODEL, EmbeddingClient, OpenAIEmbeddingClient
 from rag.embeddings.store import (
     EmbeddingRecord,
-    append_embedding_records,
-    existing_embedding_keys,
-    initialize_embedding_records_file,
+    write_embedding_records_atomic,
 )
+from rag.retrieval.read_model import load_normalized_run
+from rag.retrieval.read_model import tokenize_query
+from rag.utils import string_or_none
 
 
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDING_BATCH_SIZE = 100
 DEFAULT_EMBEDDING_MAX_TOKENS = 8000
 DEFAULT_PROGRESS_EVERY_BATCHES = 1
@@ -43,12 +39,6 @@ LOW_INFORMATION_ACKNOWLEDGMENTS = frozenset(
         "yep",
     }
 )
-
-
-class EmbeddingClient(Protocol):
-    # Embed a batch of texts with one configured model.
-    def embed_texts(self, texts: list[str], *, model: str) -> list[list[float]]:
-        ...
 
 
 @dataclass(frozen=True)
@@ -82,18 +72,6 @@ class PreparedEmbeddingText:
     truncation_occurred: bool
     original_token_count: int | None
     stored_token_count: int | None
-
-
-class OpenAIEmbeddingClient:
-    # Call the modern OpenAI embeddings API through the current Python SDK.
-    def embed_texts(self, texts: list[str], *, model: str) -> list[list[float]]:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError("OpenAI Python SDK is required for embedding generation.") from exc
-        client = OpenAI()
-        response = client.embeddings.create(model=model, input=texts)
-        return [list(item.embedding) for item in response.data]
 
 
 # Build message-level embeddings for one normalized run and write them back into that run directory.
@@ -161,25 +139,22 @@ def build_run_embeddings(
         sample=sample,
         sample_seed=sample_seed,
     )
-    existing_keys = existing_embedding_keys(loaded_run.run_dir)
-    messages_to_embed = [
-        message
-        for message in selected_messages
-        if ((string_or_none(message.get("message_id")) or ""), model) not in existing_keys
-    ]
-    resumed_skip_count = len(selected_messages) - len(messages_to_embed)
+    # No incremental resume: every build embeds all selected messages and writes a complete artifact.
+    # This avoids repeated file opens that cause PermissionError on Windows.
+    messages_to_embed = list(selected_messages)
+    resumed_skip_count = 0
     selected_message_count = len(selected_messages)
     build_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    _safe_print(f"Embedding {selected_message_count} selected messages out of {total_messages_in_run} eligible messages")
+    safe_print(f"Embedding {selected_message_count} selected messages out of {total_messages_in_run} eligible messages")
     if conversation_ids or message_ids:
-        _safe_print(
+        safe_print(
             "targeted_selection: "
             f"matched_messages={targeted_match_count} "
             f"conversation_filters={len(conversation_ids)} "
             f"message_id_filters={len(message_ids)}"
         )
-    _safe_print(
+    safe_print(
         "filtered_counts: "
         f"empty_text={skipped_empty_count} "
         f"tool_role={filtered_tool_role_count} "
@@ -187,13 +162,14 @@ def build_run_embeddings(
         f"trivially_short={filtered_trivial_short_count}"
     )
     if batch_size < 20 and selected_message_count >= 1000:
-        _safe_print("warning: batch_size < 20 on a large build will be slow; validate first, then increase it")
+        safe_print("warning: batch_size < 20 on a large build will be slow; validate first, then increase it")
 
+    # Buffer all records in memory and write once at the end to avoid repeated file opens.
+    # This trades incremental resume for reliability on Windows where file locks cause PermissionError.
+    all_records: list[EmbeddingRecord] = []
     pending_messages: list[dict[str, object]] = []
     pending_texts: list[PreparedEmbeddingText] = []
     artifact_path = loaded_run.run_dir / "message_embeddings.jsonl"
-    if not artifact_path.exists():
-        artifact_path = initialize_embedding_records_file(loaded_run.run_dir)
     embedded_count = 0
     batch_count = 0
 
@@ -217,7 +193,7 @@ def build_run_embeddings(
                 subset_sample_size=sample,
                 subset_sample_seed=sample_seed if sample is not None else None,
             )
-            append_embedding_records(loaded_run.run_dir, tuple(batch_records))
+            all_records.extend(batch_records)
             embedded_count += len(batch_records)
             batch_count += 1
             _maybe_log_progress(embedded_count, len(messages_to_embed), batch_count, progress_every_batches)
@@ -238,10 +214,18 @@ def build_run_embeddings(
             subset_sample_size=sample,
             subset_sample_seed=sample_seed if sample is not None else None,
         )
-        append_embedding_records(loaded_run.run_dir, tuple(batch_records))
+        all_records.extend(batch_records)
         embedded_count += len(batch_records)
         batch_count += 1
         _maybe_log_progress(embedded_count, len(messages_to_embed), batch_count, progress_every_batches)
+
+    # Write all records atomically: temp file first, then rename to the real artifact.
+    # If the process fails before this point, no partial output pollutes the main artifact.
+    if all_records:
+        artifact_path = write_embedding_records_atomic(loaded_run.run_dir, tuple(all_records))
+        safe_print(f"Wrote {len(all_records)} records to {artifact_path}")
+    else:
+        safe_print("No new records to write.")
 
     return EmbeddingBuildResult(
         run_id=loaded_run.run_id,
@@ -392,14 +376,7 @@ def _maybe_log_progress(
         return
     if batch_count % progress_every_batches != 0 and embedded_count != total_messages_to_embed:
         return
-    _safe_print(f"Embedded {embedded_count} / {total_messages_to_embed} messages")
-
-
-# Print builder progress with the same safe encoding fallback used by other CLIs.
-def _safe_print(value: str) -> None:
-    encoding = sys.stdout.encoding or "utf-8"
-    safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
-    print(safe_value)
+    safe_print(f"Embedded {embedded_count} / {total_messages_to_embed} messages")
 
 
 # Select a deterministic subset before batching so quick validation builds are cheap.

@@ -6,7 +6,7 @@ import json
 from unittest.mock import patch
 
 from rag.embeddings.builder import build_run_embeddings, prepare_text_for_embedding
-from rag.embeddings.store import append_embedding_records, load_embedding_records
+from rag.embeddings.store import load_embedding_records, write_embedding_records_atomic
 
 
 class _FakeEmbeddingClient:
@@ -25,16 +25,16 @@ class _RecordingEmbeddingClient:
         return [[1.0, 1.0] for _ in texts]
 
 
-class _StreamingObservationClient:
-    # Observe how many records are already on disk each time a batch is sent to the embedding client.
+class _BufferedObservationClient:
+    # Verify that no artifact is written to disk during batching — only after the build completes.
     def __init__(self, run_dir: Path) -> None:
         self.run_dir = run_dir
-        self.observed_counts: list[int] = []
+        self.artifact_existed_during_batch: list[bool] = []
 
     def embed_texts(self, texts: list[str], *, model: str) -> list[list[float]]:
         artifact_path = self.run_dir / "message_embeddings.jsonl"
-        self.observed_counts.append(
-            0 if not artifact_path.exists() else len([line for line in artifact_path.read_text(encoding="utf-8").splitlines() if line.strip()])
+        self.artifact_existed_during_batch.append(
+            artifact_path.exists() and len(artifact_path.read_text(encoding="utf-8").strip()) > 0
         )
         return [[1.0, 1.0] for _ in texts]
 
@@ -77,9 +77,9 @@ class EmbeddingBuilderTests(unittest.TestCase):
         self.assertEqual(records[0].stored_text_length, len(records[0].text))
         self.assertEqual(records[-1].message_id, "claude:message:msg-3")
 
-    # Verify that embedding batches are appended incrementally and the artifact exists during the run.
-    def test_builds_embedding_artifact_in_streaming_batches(self) -> None:
-        observing_client = _StreamingObservationClient(self.run_dir)
+    # Verify that the artifact is not written during batching — only once after all batches complete.
+    def test_builds_embedding_artifact_with_buffered_write(self) -> None:
+        observing_client = _BufferedObservationClient(self.run_dir)
 
         result = build_run_embeddings(
             self.run_dir,
@@ -90,37 +90,23 @@ class EmbeddingBuilderTests(unittest.TestCase):
         )
 
         self.assertEqual(result.record_count, 6)
-        self.assertEqual(observing_client.observed_counts, [0, 2, 4])
+        self.assertTrue(all(not existed for existed in observing_client.artifact_existed_during_batch))
         self.assertEqual(len(load_embedding_records(self.run_dir)), 6)
 
-    # Verify that append retries after a transient Windows-style file lock and still writes one batch once.
-    def test_append_embedding_records_retries_transient_permission_error(self) -> None:
-        build_run_embeddings(
+    # Verify that atomic write uses a temp file and the main artifact only appears after success.
+    def test_atomic_write_produces_clean_artifact(self) -> None:
+        result = build_run_embeddings(
             self.run_dir,
             model="test-embedding",
-            batch_size=2,
-            limit=1,
+            batch_size=10,
             embedding_client=_FakeEmbeddingClient(),
         )
-        existing_record = load_embedding_records(self.run_dir)[0]
-        original_open = Path.open
-        open_calls = {"count": 0}
-
-        def flaky_open(path_obj: Path, *args, **kwargs):
-            mode = args[0] if args else kwargs.get("mode", "r")
-            if path_obj == self.run_dir / "message_embeddings.jsonl" and mode == "ab":
-                open_calls["count"] += 1
-                if open_calls["count"] == 1:
-                    raise PermissionError("transient file lock")
-            return original_open(path_obj, *args, **kwargs)
-
-        with patch("pathlib.Path.open", new=flaky_open):
-            append_embedding_records(self.run_dir, (existing_record,))
 
         records = load_embedding_records(self.run_dir)
-        self.assertEqual(open_calls["count"], 2)
-        self.assertEqual(len(records), 2)
-        self.assertEqual(records[0].message_id, records[1].message_id)
+        self.assertEqual(len(records), 6)
+        self.assertTrue(result.artifact_path.exists())
+        tmp_path = self.run_dir / "message_embeddings.jsonl.tmp"
+        self.assertFalse(tmp_path.exists())
 
     # Verify that short message text stays unchanged during embedding preprocessing.
     def test_prepare_text_for_embedding_leaves_short_text_unchanged(self) -> None:
@@ -177,8 +163,8 @@ class EmbeddingBuilderTests(unittest.TestCase):
         ])
         self.assertEqual(records[0].subset_limit, 2)
 
-    # Verify that resume skips already-embedded message/model pairs and appends only missing records.
-    def test_build_run_embeddings_resumes_without_duplicates(self) -> None:
+    # Verify that a full rebuild replaces the artifact cleanly with all eligible records.
+    def test_build_run_embeddings_full_rebuild_replaces_artifact(self) -> None:
         initial = build_run_embeddings(
             self.run_dir,
             model="test-embedding",
@@ -186,7 +172,7 @@ class EmbeddingBuilderTests(unittest.TestCase):
             limit=2,
             embedding_client=_FakeEmbeddingClient(),
         )
-        resumed = build_run_embeddings(
+        full_rebuild = build_run_embeddings(
             self.run_dir,
             model="test-embedding",
             batch_size=10,
@@ -195,7 +181,7 @@ class EmbeddingBuilderTests(unittest.TestCase):
 
         records = load_embedding_records(self.run_dir)
         self.assertEqual(initial.record_count, 2)
-        self.assertEqual(resumed.resumed_skip_count, 2)
+        self.assertEqual(full_rebuild.record_count, 6)
         self.assertEqual(len(records), 6)
         self.assertEqual(len({record.message_id for record in records}), 6)
 
@@ -278,8 +264,8 @@ class EmbeddingBuilderTests(unittest.TestCase):
         self.assertEqual({record.conversation_id for record in records}, {"claude:conversation:conv-burnout"})
         self.assertEqual(result.targeted_conversation_count, 1)
 
-    # Verify that repeated targeted conversation builds resume safely without duplicate records.
-    def test_targeted_conversation_build_resumes_without_duplicates(self) -> None:
+    # Verify that repeated targeted conversation builds produce the same clean artifact.
+    def test_targeted_conversation_build_produces_consistent_artifact(self) -> None:
         first = build_run_embeddings(
             self.run_dir,
             model="test-embedding",
@@ -297,8 +283,7 @@ class EmbeddingBuilderTests(unittest.TestCase):
 
         records = load_embedding_records(self.run_dir)
         self.assertEqual(first.record_count, 3)
-        self.assertEqual(second.record_count, 0)
-        self.assertEqual(second.resumed_skip_count, 3)
+        self.assertEqual(second.record_count, 3)
         self.assertEqual(len(records), 3)
         self.assertEqual(len({record.message_id for record in records}), 3)
 

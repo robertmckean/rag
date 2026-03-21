@@ -3,7 +3,7 @@ import shutil
 import unittest
 from pathlib import Path
 
-from rag.embeddings.store import EmbeddingRecord, write_embedding_records
+from rag.embeddings.store import EmbeddingRecord, write_embedding_records_atomic
 from rag.retrieval.lexical import retrieve_message_windows
 
 
@@ -197,7 +197,7 @@ class SemanticRetrievalTests(unittest.TestCase):
                 embedding=(1.0, 0.0),
             ),
         )
-        write_embedding_records(self.run_dir, records)
+        write_embedding_records_atomic(self.run_dir, records)
 
 
 if __name__ == "__main__":

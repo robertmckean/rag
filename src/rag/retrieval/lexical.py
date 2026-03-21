@@ -1,232 +1,55 @@
-"""Minimal lexical retrieval over normalized message records with contextual and timeline views."""
+"""Lexical retrieval orchestrator over normalized message records with contextual and timeline views.
+
+This module is the public API surface for retrieval. Consumers should import from here.
+Internal scoring, query parsing, semantic ranking, and type definitions live in submodules.
+"""
 
 from __future__ import annotations
 
-import math
-import re
-from collections import Counter
-from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from rag.embeddings.builder import DEFAULT_EMBEDDING_MODEL, OpenAIEmbeddingClient
-from rag.embeddings.similarity import cosine_similarity
-from rag.embeddings.store import EmbeddingRecord, load_embedding_records
+from rag.embeddings.client import DEFAULT_EMBEDDING_MODEL
 from rag.retrieval.read_model import LoadedRun, load_normalized_run, normalize_lexical_text, tokenize_query
 from rag.retrieval.utils import string_or_none
+
+# --- Re-exports for downstream consumers (do not remove) ---
+from rag.retrieval.types import (  # noqa: F401
+    BM25_K1,
+    BM25_B,
+    EXACT_PHRASE_BOOST,
+    TITLE_TERM_BOOST,
+    RECENCY_BOOST_MAX,
+    WINDOW_RETRIEVAL_MODES,
+    TIMELINE_RETRIEVAL_MODE,
+    CLI_RETRIEVAL_MODES,
+    RETRIEVAL_CHANNELS,
+    STOPWORD_FILTER_ENABLED,
+    STOPWORDS,
+    RetrievalFilters,
+    RankedResult,
+    TimelineResult,
+    ParsedQuery,
+    _Candidate,
+)
+from rag.retrieval.query import parse_query  # noqa: F401
+from rag.retrieval.scoring import (
+    build_bm25_scorer,
+    score_message_bm25,
+    apply_retrieval_mode,
+    sort_candidates as _sort_candidates,
+    candidate_sort_key as _candidate_sort_key,
+    with_mode_details as _with_mode_details,
+)
+from rag.retrieval.semantic import (
+    rank_semantic_candidates as _rank_semantic_candidates,
+    merge_hybrid_candidates as _merge_hybrid_candidates,
+)
 
 
 # Ranking is message-first because message text is the narrowest useful relevance signal.
 # The default retrieval modes return contextual windows so humans and LLMs can see local conversation flow.
 # Timeline mode is a separate flat chronology view for topic evolution across conversations.
-
-
-# BM25 constants stay explicit so ranking can be tuned without changing the retrieval contract.
-BM25_K1 = 1.5
-BM25_B = 0.75
-EXACT_PHRASE_BOOST = 1.5
-TITLE_TERM_BOOST = 0.35
-RECENCY_BOOST_MAX = 0.35
-WINDOW_RETRIEVAL_MODES = ("relevance", "newest", "oldest", "relevance_recency")
-TIMELINE_RETRIEVAL_MODE = "timeline"
-CLI_RETRIEVAL_MODES = WINDOW_RETRIEVAL_MODES + (TIMELINE_RETRIEVAL_MODE,)
-RETRIEVAL_CHANNELS = ("bm25", "semantic", "hybrid")
-STOPWORD_FILTER_ENABLED = False
-STOPWORDS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "by",
-        "for",
-        "from",
-        "how",
-        "i",
-        "in",
-        "is",
-        "it",
-        "of",
-        "on",
-        "or",
-        "show",
-        "that",
-        "the",
-        "to",
-        "was",
-        "what",
-        "where",
-        "with",
-    }
-)
-
-
-@dataclass(frozen=True)
-class RetrievalFilters:
-    provider: str | None = None
-    conversation_id: str | None = None
-    date_from: str | None = None
-    date_to: str | None = None
-    author_role: str | None = None
-
-
-@dataclass(frozen=True)
-class RankedResult:
-    rank: int
-    score: float
-    result_id: str
-    run_id: str
-    provider: str
-    conversation_id: str
-    conversation_title: str | None
-    conversation_created_at: str | None
-    conversation_updated_at: str | None
-    focal_message_id: str
-    focal_created_at: str | None
-    focal_sequence_index: int
-    window_start_sequence_index: int
-    window_end_sequence_index: int
-    messages: tuple[dict[str, object], ...]
-    match_basis: dict[str, object]
-    provenance: dict[str, object]
-
-    # Convert the retrieval result into a JSON-serializable dict for CLI output.
-    def to_dict(self) -> dict[str, object]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class TimelineResult:
-    # Timeline results intentionally stay compact because this mode is for flat chronology browsing.
-    # Reusing the windowed result shape would force unused window fields into timeline-only output.
-    # The separate type is therefore intentional rather than an incomplete refactor.
-    rank: int
-    score: float
-    run_id: str
-    provider: str
-    conversation_id: str
-    conversation_title: str | None
-    focal_message_id: str
-    focal_created_at: str | None
-    focal_sequence_index: int
-    author_role: str | None
-    focal_excerpt: str | None
-    match_basis: dict[str, object]
-    provenance: dict[str, object]
-
-    # Convert the timeline result into a JSON-serializable dict for CLI output.
-    def to_dict(self) -> dict[str, object]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class ParsedQuery:
-    raw_query: str
-    normalized_query_terms: tuple[str, ...]
-    scoring_terms: tuple[str, ...]
-    stopword_filtered_terms: tuple[str, ...]
-    quoted_phrases: tuple[str, ...]
-    normalized_phrase_targets: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class _Candidate:
-    score: float
-    base_score: float
-    recency_boost: float
-    bm25_score: float | None
-    semantic_similarity: float | None
-    retrieval_sources: tuple[str, ...]
-    provider: str
-    conversation_id: str
-    message_id: str
-    created_at: str | None
-    created_at_value: datetime | None
-    match_basis: dict[str, object]
-
-
-# Hold the per-run statistics and scoring helpers for BM25 message ranking.
-@dataclass(frozen=True)
-class _BM25Scorer:
-    query_terms: tuple[str, ...]
-    document_count: int
-    average_document_length: float
-    document_frequency_by_term: dict[str, int]
-    document_length_by_message_id: dict[str, int]
-    term_frequency_by_message_id: dict[str, Counter[str]]
-
-
-# Build the BM25 scorer over the already-loaded normalized run.
-def _build_bm25_scorer(loaded_run: LoadedRun, query_terms: tuple[str, ...]) -> _BM25Scorer:
-    document_frequency_by_term: dict[str, int] = {}
-    document_length_by_message_id: dict[str, int] = {}
-    term_frequency_by_message_id: dict[str, Counter[str]] = {}
-
-    for message_id, searchable_text in loaded_run.searchable_text_by_message_id.items():
-        tokens = tokenize_query(searchable_text)
-        term_counts = Counter(tokens)
-        term_frequency_by_message_id[message_id] = term_counts
-        document_length_by_message_id[message_id] = len(tokens)
-
-        for term in set(tokens):
-            document_frequency_by_term[term] = document_frequency_by_term.get(term, 0) + 1
-
-    document_count = len(term_frequency_by_message_id)
-    total_document_length = sum(document_length_by_message_id.values())
-    average_document_length = (total_document_length / document_count) if document_count else 0.0
-
-    return _BM25Scorer(
-        query_terms=query_terms,
-        document_count=document_count,
-        average_document_length=average_document_length,
-        document_frequency_by_term=document_frequency_by_term,
-        document_length_by_message_id=document_length_by_message_id,
-        term_frequency_by_message_id=term_frequency_by_message_id,
-    )
-
-
-# Score one message with BM25 and return both the score and per-term contribution details.
-def _score_message_bm25(
-    scorer: _BM25Scorer,
-    message_id: str,
-) -> tuple[float, list[dict[str, object]]]:
-    document_length = scorer.document_length_by_message_id.get(message_id, 0)
-    term_frequencies = scorer.term_frequency_by_message_id.get(message_id, Counter())
-    if not term_frequencies:
-        return 0.0, []
-
-    contributions: list[dict[str, object]] = []
-    total_score = 0.0
-
-    for term in scorer.query_terms:
-        term_frequency = term_frequencies.get(term, 0)
-        if term_frequency <= 0:
-            continue
-
-        document_frequency = scorer.document_frequency_by_term.get(term, 0)
-        inverse_document_frequency = math.log(
-            1.0 + ((scorer.document_count - document_frequency + 0.5) / (document_frequency + 0.5))
-        )
-        average_document_length = scorer.average_document_length or 1.0
-        length_normalizer = BM25_K1 * (1.0 - BM25_B + BM25_B * (document_length / average_document_length))
-        numerator = term_frequency * (BM25_K1 + 1.0)
-        denominator = term_frequency + length_normalizer
-        contribution = inverse_document_frequency * (numerator / denominator)
-        total_score += contribution
-        contributions.append(
-            {
-                "term": term,
-                "term_frequency": term_frequency,
-                "document_frequency": document_frequency,
-                "inverse_document_frequency": round(inverse_document_frequency, 6),
-                "contribution": round(contribution, 6),
-            }
-        )
-
-    return total_score, contributions
 
 
 # Load a run directory and execute lexical retrieval in one call.
@@ -313,7 +136,7 @@ def search_loaded_run(
         embedding_model=embedding_model,
         embedding_client=embedding_client,
     )
-    ordered_candidates = _apply_retrieval_mode(candidates, mode)
+    ordered_candidates = apply_retrieval_mode(candidates, mode)
 
     results: list[RankedResult] = []
     seen_window_keys: set[tuple[str, int, int]] = set()
@@ -371,6 +194,9 @@ def search_loaded_run_timeline(
     return tuple(results)
 
 
+# --- Candidate ranking (BM25 lexical path) ---
+
+
 # Rank message-level candidates using simple lexical and metadata-aware signals.
 def _rank_candidates(
     loaded_run: LoadedRun,
@@ -378,7 +204,7 @@ def _rank_candidates(
     filters: RetrievalFilters,
 ) -> list[_Candidate]:
     candidates: list[_Candidate] = []
-    scorer = _build_bm25_scorer(loaded_run, parsed_query.scoring_terms)
+    scorer = build_bm25_scorer(loaded_run, parsed_query.scoring_terms)
     query_token_set = set(parsed_query.scoring_terms)
 
     for message_id, message in loaded_run.message_by_id.items():
@@ -389,7 +215,7 @@ def _rank_candidates(
         if not searchable_text:
             continue
 
-        bm25_score, term_contributions = _score_message_bm25(scorer, message_id)
+        bm25_score, term_contributions = score_message_bm25(scorer, message_id)
         overlap_tokens = tuple(contribution["term"] for contribution in term_contributions)
         matched_phrase_targets = tuple(
             phrase_target for phrase_target in parsed_query.normalized_phrase_targets if phrase_target in searchable_text
@@ -469,6 +295,9 @@ def _rank_candidates(
     return candidates
 
 
+# --- Channel routing ---
+
+
 # Choose the requested retrieval channel while preserving the existing lexical path.
 def _retrieve_candidates(
     loaded_run: LoadedRun,
@@ -491,296 +320,14 @@ def _retrieve_candidates(
         limit=semantic_top_k,
         embedding_model=embedding_model,
         embedding_client=embedding_client,
+        message_matches_filters_fn=_message_matches_filters,
     )
     if channel == "semantic":
         return semantic_candidates
     return _merge_hybrid_candidates(bm25_candidates, semantic_candidates)
 
 
-# Rank message-level candidates with stored embeddings and query cosine similarity.
-def _rank_semantic_candidates(
-    loaded_run: LoadedRun,
-    parsed_query: ParsedQuery,
-    filters: RetrievalFilters,
-    *,
-    limit: int,
-    embedding_model: str,
-    embedding_client: object | None,
-) -> list[_Candidate]:
-    normalized_query = normalize_lexical_text(parsed_query.raw_query)
-    if not normalized_query:
-        return []
-
-    records = load_embedding_records(loaded_run.run_dir)
-    matching_records = [record for record in records if record.embedding_model == embedding_model]
-    if not matching_records:
-        available_models = sorted({record.embedding_model for record in records})
-        if embedding_model not in available_models:
-            raise ValueError(
-                f"Embeddings for model '{embedding_model}' not found in {loaded_run.run_dir}. "
-                f"Available models: {available_models or '(none)'}"
-            )
-
-    client = embedding_client or OpenAIEmbeddingClient()
-    query_vectors = client.embed_texts([normalized_query], model=embedding_model)
-    if not query_vectors:
-        return []
-    query_vector = tuple(float(value) for value in query_vectors[0])
-
-    candidates: list[_Candidate] = []
-    for record in matching_records:
-        message = loaded_run.message_by_id.get(record.message_id)
-        if message is None or not _message_matches_filters(message, filters):
-            continue
-        similarity = cosine_similarity(query_vector, record.embedding)
-        if similarity <= 0.0:
-            continue
-        candidates.append(
-            _Candidate(
-                score=similarity,
-                base_score=similarity,
-                recency_boost=0.0,
-                bm25_score=None,
-                semantic_similarity=round(similarity, 6),
-                retrieval_sources=("semantic",),
-                provider=record.provider,
-                conversation_id=record.conversation_id,
-                message_id=record.message_id,
-                created_at=record.created_at,
-                created_at_value=_parse_iso_timestamp(record.created_at) if record.created_at else None,
-                match_basis={
-                    "raw_query": parsed_query.raw_query,
-                    "normalized_query_terms": list(parsed_query.normalized_query_terms),
-                    "scoring_terms": list(parsed_query.scoring_terms),
-                    "quoted_phrases": list(parsed_query.quoted_phrases),
-                    "normalized_phrase_targets": list(parsed_query.normalized_phrase_targets),
-                    "stopword_filter_enabled": STOPWORD_FILTER_ENABLED,
-                    "stopword_filtered_terms": list(parsed_query.stopword_filtered_terms),
-                    "matched_text_terms": sorted(set(parsed_query.scoring_terms) & set(tokenize_query(record.text))),
-                    "matched_phrase_targets": [],
-                    "matched_metadata_filters": _matched_filters_dict(filters),
-                    "scoring_features": {
-                        "query_terms": list(parsed_query.scoring_terms),
-                        "bm25_k1": BM25_K1,
-                        "bm25_b": BM25_B,
-                        "document_length": len(tokenize_query(record.text)),
-                        "average_document_length": None,
-                        "bm25_term_contributions": [],
-                        "bm25_score": None,
-                        "exact_phrase_match": False,
-                        "matched_phrase_count": 0,
-                        "exact_phrase_boost": 0.0,
-                        "title_overlap": 0,
-                        "title_boost": 0.0,
-                        "retrieval_mode": "relevance",
-                        "recency_boost": 0.0,
-                        "chronological_rank_basis": "semantic_similarity_desc",
-                        "relevance_score": round(similarity, 6),
-                        "ranking_score": round(similarity, 6),
-                        "final_score": round(similarity, 6),
-                        "semantic_similarity": round(similarity, 6),
-                    },
-                    "focal_match_excerpt": _build_excerpt({"text": record.text}),
-                    "retrieval_sources": ["semantic"],
-                },
-            )
-        )
-
-    return sorted(candidates, key=_candidate_sort_key)[:limit]
-
-
-# Merge BM25 and semantic candidates on message id while preserving both provenance and scores.
-def _merge_hybrid_candidates(
-    bm25_candidates: list[_Candidate],
-    semantic_candidates: list[_Candidate],
-) -> list[_Candidate]:
-    candidate_by_message_id: dict[str, _Candidate] = {}
-
-    for candidate in bm25_candidates + semantic_candidates:
-        existing = candidate_by_message_id.get(candidate.message_id)
-        if existing is None:
-            candidate_by_message_id[candidate.message_id] = candidate
-            continue
-        candidate_by_message_id[candidate.message_id] = _combine_candidate(existing, candidate)
-
-    merged = list(candidate_by_message_id.values())
-    for index, candidate in enumerate(sorted(merged, key=_hybrid_candidate_sort_key), start=1):
-        merged[index - 1] = _with_mode_details(
-            candidate,
-            mode="relevance",
-            ranking_score=candidate.base_score,
-            recency_boost=0.0,
-        )
-    return sorted(merged, key=_hybrid_candidate_sort_key)
-
-
-# Combine one BM25 candidate and one semantic candidate into a single hybrid result row.
-def _combine_candidate(left: _Candidate, right: _Candidate) -> _Candidate:
-    sources = tuple(sorted(set(left.retrieval_sources + right.retrieval_sources)))
-    bm25_score = left.bm25_score if left.bm25_score is not None else right.bm25_score
-    semantic_similarity = (
-        left.semantic_similarity if left.semantic_similarity is not None else right.semantic_similarity
-    )
-    bm25_signal = bm25_score or 0.0
-    semantic_signal = semantic_similarity or 0.0
-    both_bonus = 10.0 if len(sources) == 2 else 0.0
-    hybrid_score = both_bonus + max(bm25_signal, semantic_signal)
-
-    match_basis = dict(left.match_basis)
-    scoring_features = dict(match_basis.get("scoring_features", {}))
-    scoring_features["bm25_score"] = bm25_score
-    scoring_features["semantic_similarity"] = semantic_similarity
-    scoring_features["hybrid_ranking_score"] = round(hybrid_score, 6)
-    scoring_features["relevance_score"] = round(hybrid_score, 6)
-    scoring_features["ranking_score"] = round(hybrid_score, 6)
-    scoring_features["final_score"] = round(hybrid_score, 6)
-    scoring_features["chronological_rank_basis"] = "hybrid_rank_desc"
-    match_basis["scoring_features"] = scoring_features
-    match_basis["retrieval_sources"] = list(sources)
-
-    merged_terms = sorted(set(match_basis.get("matched_text_terms", [])) | set(right.match_basis.get("matched_text_terms", [])))
-    match_basis["matched_text_terms"] = merged_terms
-
-    return _Candidate(
-        score=hybrid_score,
-        base_score=hybrid_score,
-        recency_boost=0.0,
-        bm25_score=bm25_score,
-        semantic_similarity=semantic_similarity,
-        retrieval_sources=sources,
-        provider=left.provider,
-        conversation_id=left.conversation_id,
-        message_id=left.message_id,
-        created_at=left.created_at or right.created_at,
-        created_at_value=left.created_at_value or right.created_at_value,
-        match_basis=match_basis,
-    )
-
-
-# Parse the raw query into normalized scoring terms and exact phrase targets.
-def parse_query(raw_query: str) -> ParsedQuery:
-    normalized_raw_query = " ".join(raw_query.split())
-    quoted_phrases = tuple(match.group(1).strip() for match in _quoted_phrase_matches(normalized_raw_query) if match.group(1).strip())
-    phrase_targets = tuple(
-        normalized_phrase for normalized_phrase in (
-            normalize_lexical_text(phrase) for phrase in quoted_phrases
-        )
-        if normalized_phrase
-    )
-
-    all_query_terms = tuple(_unique_preserving_order(tokenize_query(normalized_raw_query)))
-    stopword_filtered_terms = tuple(term for term in all_query_terms if term not in STOPWORDS)
-    scoring_terms = stopword_filtered_terms if STOPWORD_FILTER_ENABLED and stopword_filtered_terms else all_query_terms
-
-    return ParsedQuery(
-        raw_query=raw_query,
-        normalized_query_terms=all_query_terms,
-        scoring_terms=scoring_terms,
-        stopword_filtered_terms=stopword_filtered_terms,
-        quoted_phrases=quoted_phrases,
-        normalized_phrase_targets=phrase_targets,
-    )
-
-
-# Apply the requested retrieval mode while keeping the candidate pool unchanged.
-def _apply_retrieval_mode(candidates: list[_Candidate], mode: str) -> list[_Candidate]:
-    if mode == "relevance":
-        return _sort_candidates(
-            [_with_mode_details(candidate, mode=mode, ranking_score=candidate.base_score, recency_boost=0.0) for candidate in candidates],
-            mode=mode,
-        )
-    if mode == "newest":
-        return _sort_candidates(
-            [_with_mode_details(candidate, mode=mode, ranking_score=candidate.base_score, recency_boost=0.0) for candidate in candidates],
-            mode=mode,
-        )
-    if mode == "oldest":
-        return _sort_candidates(
-            [_with_mode_details(candidate, mode=mode, ranking_score=candidate.base_score, recency_boost=0.0) for candidate in candidates],
-            mode=mode,
-        )
-    if mode == "relevance_recency":
-        return _apply_relevance_recency_mode(candidates)
-    raise ValueError(f"Unsupported retrieval mode: {mode}")
-
-
-# Apply a modest recency boost on top of lexical relevance without changing the candidate pool.
-def _apply_relevance_recency_mode(candidates: list[_Candidate]) -> list[_Candidate]:
-    timestamp_values = [candidate.created_at_value for candidate in candidates if candidate.created_at_value is not None]
-    if not timestamp_values:
-        scored_candidates = [
-            _with_mode_details(candidate, mode="relevance_recency", ranking_score=candidate.base_score, recency_boost=0.0)
-            for candidate in candidates
-        ]
-        return sorted(scored_candidates, key=_candidate_sort_key)
-
-    min_timestamp = min(timestamp_values)
-    max_timestamp = max(timestamp_values)
-    span_seconds = (max_timestamp - min_timestamp).total_seconds()
-
-    scored_candidates: list[_Candidate] = []
-    for candidate in candidates:
-        recency_boost = 0.0
-        if candidate.created_at_value is not None and span_seconds > 0.0:
-            recency_position = (candidate.created_at_value - min_timestamp).total_seconds() / span_seconds
-            recency_boost = RECENCY_BOOST_MAX * recency_position
-        scored_candidates.append(
-            _with_mode_details(
-                candidate,
-                mode="relevance_recency",
-                ranking_score=candidate.base_score + recency_boost,
-                recency_boost=recency_boost,
-            )
-        )
-
-    return sorted(scored_candidates, key=_candidate_sort_key)
-
-
-# Sort candidates for each retrieval view while keeping chronological behavior explicit.
-def _sort_candidates(candidates: list[_Candidate], *, mode: str) -> list[_Candidate]:
-    if mode == "newest":
-        return sorted(candidates, key=lambda candidate: _candidate_sort_key_chronological(candidate, descending=True))
-    if mode in {"oldest", TIMELINE_RETRIEVAL_MODE}:
-        return sorted(candidates, key=lambda candidate: _candidate_sort_key_chronological(candidate, descending=False))
-    return sorted(candidates, key=_candidate_sort_key)
-
-
-# Stamp the active retrieval mode details onto one candidate without changing its lexical inputs.
-def _with_mode_details(
-    candidate: _Candidate,
-    *,
-    mode: str,
-    ranking_score: float,
-    recency_boost: float,
-) -> _Candidate:
-    scoring_features = dict(candidate.match_basis.get("scoring_features", {}))
-    scoring_features["retrieval_mode"] = mode
-    scoring_features["recency_boost"] = round(recency_boost, 6)
-    scoring_features["relevance_score"] = round(candidate.base_score, 6)
-    scoring_features["ranking_score"] = round(ranking_score, 6)
-    scoring_features["final_score"] = round(ranking_score, 6)
-    scoring_features["chronological_rank_basis"] = _chronological_rank_basis(mode)
-    scoring_features["bm25_score"] = candidate.bm25_score
-    scoring_features["semantic_similarity"] = candidate.semantic_similarity
-
-    match_basis = dict(candidate.match_basis)
-    match_basis["scoring_features"] = scoring_features
-    match_basis["retrieval_sources"] = list(candidate.retrieval_sources)
-
-    return _Candidate(
-        score=ranking_score,
-        base_score=candidate.base_score,
-        recency_boost=recency_boost,
-        bm25_score=candidate.bm25_score,
-        semantic_similarity=candidate.semantic_similarity,
-        retrieval_sources=candidate.retrieval_sources,
-        provider=candidate.provider,
-        conversation_id=candidate.conversation_id,
-        message_id=candidate.message_id,
-        created_at=candidate.created_at,
-        created_at_value=candidate.created_at_value,
-        match_basis=match_basis,
-    )
+# --- Window and timeline result builders ---
 
 
 # Expand one ranked focal message into the default conversation window result.
@@ -883,6 +430,9 @@ def _build_timeline_result(
     )
 
 
+# --- Filtering helpers ---
+
+
 # Apply the minimal first-slice metadata filters against one message.
 def _message_matches_filters(message: dict[str, object], filters: RetrievalFilters) -> bool:
     if filters.provider and string_or_none(message.get("provider")) != filters.provider:
@@ -933,6 +483,9 @@ def _matched_filters_dict(filters: RetrievalFilters) -> dict[str, object]:
     return matched
 
 
+# --- Small helpers ---
+
+
 # Build a short excerpt from the focal message text for ranking inspection output.
 def _build_excerpt(message: dict[str, object]) -> str | None:
     text = string_or_none(message.get("text")) or ""
@@ -942,41 +495,6 @@ def _build_excerpt(message: dict[str, object]) -> str | None:
     if len(excerpt) > 160:
         excerpt = excerpt[:157] + "..."
     return excerpt
-
-
-# Find quoted phrases in the raw query without changing the surrounding tokenization rules.
-def _quoted_phrase_matches(value: str) -> tuple[re.Match[str], ...]:
-    return tuple(re.finditer(r'"([^"]+)"', value))
-
-
-# Sort candidates by score first and then by stable chronological/id tie-breakers.
-def _candidate_sort_key(candidate: _Candidate) -> tuple[float, str, str]:
-    return (-candidate.score, candidate.created_at or "", candidate.message_id)
-
-
-# Sort hybrid candidates by overlap first, then by strongest available score, then stable chronology/id.
-def _hybrid_candidate_sort_key(candidate: _Candidate) -> tuple[float, float, str, str]:
-    return (-len(candidate.retrieval_sources), -candidate.base_score, candidate.created_at or "", candidate.message_id)
-
-
-# Sort candidates chronologically while keeping lexical score as a stable secondary tie-breaker.
-def _candidate_sort_key_chronological(candidate: _Candidate, *, descending: bool) -> tuple[float, float, str]:
-    if candidate.created_at_value is None:
-        timestamp = float("-inf") if descending else float("inf")
-    else:
-        timestamp = candidate.created_at_value.timestamp()
-    return ((-timestamp) if descending else timestamp, -candidate.base_score, candidate.message_id)
-
-
-# Render a short label describing which field currently controls chronological ordering.
-def _chronological_rank_basis(mode: str) -> str:
-    if mode == "newest":
-        return "created_at_desc"
-    if mode == "oldest":
-        return "created_at_asc"
-    if mode == "relevance_recency":
-        return "relevance_score_desc_plus_recency_boost"
-    return "relevance_score_desc"
 
 
 # Find a focal message inside its ordered conversation stream.
@@ -1024,15 +542,3 @@ def _parse_date_boundary(value: str, *, end_of_day: bool) -> datetime:
         normalized_value = f"{normalized_value}{suffix}"
     parsed = datetime.fromisoformat(normalized_value.replace("Z", "+00:00"))
     return parsed.astimezone(timezone.utc)
-
-
-# Remove duplicate tokens while preserving the user query's left-to-right order.
-def _unique_preserving_order(values: tuple[str, ...]) -> tuple[str, ...]:
-    seen: set[str] = set()
-    unique_values: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        unique_values.append(value)
-    return tuple(unique_values)

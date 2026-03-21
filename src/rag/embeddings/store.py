@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from rag.retrieval.utils import string_or_none
+from rag.utils import string_or_none
 
 
 EMBEDDINGS_ARTIFACT_NAME = "message_embeddings.jsonl"
-APPEND_RETRY_ATTEMPTS = 5
-APPEND_RETRY_DELAY_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -123,56 +120,18 @@ def load_embedding_records(run_dir: Path) -> tuple[EmbeddingRecord, ...]:
     return tuple(records)
 
 
-# Write deterministic message-level embeddings for one normalized run.
-def write_embedding_records(run_dir: Path, records: tuple[EmbeddingRecord, ...]) -> Path:
+# Write embedding records atomically: write to a temp file first, then rename over the real artifact.
+def write_embedding_records_atomic(run_dir: Path, records: tuple[EmbeddingRecord, ...]) -> Path:
     artifact_path = embeddings_artifact_path(run_dir)
-    lines = [json.dumps(record.to_dict(), ensure_ascii=True, sort_keys=True) for record in records]
-    artifact_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-    return artifact_path
-
-
-# Create or truncate the embeddings artifact before a streaming build starts.
-def initialize_embedding_records_file(run_dir: Path) -> Path:
-    artifact_path = embeddings_artifact_path(run_dir)
+    tmp_path = artifact_path.parent / (EMBEDDINGS_ARTIFACT_NAME + ".tmp")
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_text("", encoding="utf-8")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record.to_dict(), ensure_ascii=True, sort_keys=True))
+            handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    if artifact_path.exists():
+        artifact_path.unlink()
+    tmp_path.rename(artifact_path)
     return artifact_path
-
-
-# Append one batch of embedding records to the run-local JSONL artifact and flush immediately.
-def append_embedding_records(run_dir: Path, records: tuple[EmbeddingRecord, ...]) -> Path:
-    artifact_path = embeddings_artifact_path(run_dir)
-    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = "".join(
-        json.dumps(record.to_dict(), ensure_ascii=True, sort_keys=True) + "\n"
-        for record in records
-    ).encode("utf-8")
-    last_error: PermissionError | None = None
-
-    for attempt in range(APPEND_RETRY_ATTEMPTS):
-        try:
-            with artifact_path.open("ab") as handle:
-                handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
-            return artifact_path
-        except PermissionError as exc:
-            last_error = exc
-            if attempt >= APPEND_RETRY_ATTEMPTS - 1:
-                break
-            time.sleep(APPEND_RETRY_DELAY_SECONDS)
-
-    if last_error is not None:
-        raise last_error
-    return artifact_path
-
-
-# Read existing embedded message/model pairs from the current artifact for resume-safe builds.
-def existing_embedding_keys(run_dir: Path) -> set[tuple[str, str]]:
-    artifact_path = embeddings_artifact_path(run_dir)
-    if not artifact_path.exists() or not artifact_path.is_file():
-        return set()
-    return {
-        (record.message_id, record.embedding_model)
-        for record in load_embedding_records(run_dir)
-    }

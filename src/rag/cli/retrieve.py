@@ -5,9 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import sys
 
-from rag.embeddings.builder import DEFAULT_EMBEDDING_MODEL
+from rag.cli.utils import safe_print, safe_print_error
+from rag.embeddings.client import DEFAULT_EMBEDDING_MODEL
 from rag.retrieval.lexical import (
     CLI_RETRIEVAL_MODES,
     RETRIEVAL_CHANNELS,
@@ -77,10 +77,10 @@ def main(argv: list[str] | None = None) -> int:
             filters=filters,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
-        _safe_print_error(f"error: {exc}")
+        safe_print_error(f"error: {exc}")
         return 2
 
-    _safe_print(render_results_summary(args.run_dir.resolve(), args.query, args.mode, args.channel, filters, results))
+    safe_print(render_results_summary(args.run_dir.resolve(), args.query, args.mode, args.channel, filters, results))
 
     if args.json_out:
         payload = {
@@ -99,8 +99,8 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        _safe_print("")
-        _safe_print(f"json_out: {args.json_out.resolve()}")
+        safe_print("")
+        safe_print(f"json_out: {args.json_out.resolve()}")
 
     return 0
 
@@ -215,20 +215,6 @@ def _message_snippet(message: dict[str, object]) -> str | None:
         snippet = text.strip()
         return snippet[:117] + "..." if len(snippet) > 120 else snippet
     return None
-
-
-# Print terminal output with replacement fallback for consoles that cannot encode some message text.
-def _safe_print(value: str) -> None:
-    encoding = sys.stdout.encoding or "utf-8"
-    safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
-    print(safe_value)
-
-
-# Print CLI errors to stderr with the same encoding fallback used for normal output.
-def _safe_print_error(value: str) -> None:
-    encoding = sys.stderr.encoding or "utf-8"
-    safe_value = value.encode(encoding, errors="replace").decode(encoding, errors="replace")
-    print(safe_value, file=sys.stderr)
 
 
 if __name__ == "__main__":
