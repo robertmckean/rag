@@ -20,6 +20,10 @@ from rag.retrieval.types import (  # noqa: F401
     EXACT_PHRASE_BOOST,
     TITLE_TERM_BOOST,
     RECENCY_BOOST_MAX,
+    USER_VOICE_BOOST,
+    ASSISTANT_VOICE_FACTOR,
+    ASSISTANT_META_COMMENTARY_FACTOR,
+    is_assistant_meta_commentary,
     WINDOW_RETRIEVAL_MODES,
     TIMELINE_RETRIEVAL_MODE,
     CLI_RETRIEVAL_MODES,
@@ -140,6 +144,7 @@ def search_loaded_run(
 
     results: list[RankedResult] = []
     accepted_windows: dict[str, list[tuple[int, int]]] = {}
+    accepted_focal_texts: list[str] = []
 
     for candidate in ordered_candidates:
         result = _build_window_result(
@@ -152,9 +157,14 @@ def search_loaded_run(
         )
         if _focal_already_visible(result, accepted_windows):
             continue
+        focal_text = _get_focal_text(loaded_run, candidate.message_id)
+        if _focal_text_is_near_duplicate(focal_text, accepted_focal_texts):
+            continue
         accepted_windows.setdefault(result.conversation_id, []).append(
             (result.window_start_sequence_index, result.window_end_sequence_index)
         )
+        if focal_text:
+            accepted_focal_texts.append(focal_text)
         results.append(result)
         if len(results) >= limit:
             break
@@ -175,6 +185,35 @@ def _focal_already_visible(
     focal = result.focal_sequence_index
     for accepted_start, accepted_end in prior_ranges:
         if accepted_start <= focal <= accepted_end:
+            return True
+    return False
+
+
+# Extract the normalized focal message text for cross-provider dedup comparison.
+def _get_focal_text(loaded_run: LoadedRun, message_id: str) -> str:
+    message = loaded_run.message_by_id.get(message_id)
+    if not message:
+        return ""
+    text = string_or_none(message.get("text")) or ""
+    return normalize_lexical_text(text)
+
+
+# Minimum prefix length for near-duplicate detection.  Two focal messages whose normalized
+# text shares at least this many leading characters are treated as cross-provider duplicates.
+# 100 characters is long enough to avoid false positives on short generic phrases while
+# catching the verbatim user messages that appear in both ChatGPT and Claude exports.
+CROSS_PROVIDER_DEDUP_PREFIX_LENGTH = 100
+
+
+# Return True when the focal message text is a near-duplicate of any already-accepted result.
+# Near-duplicate means the first N characters of normalized text match, which catches the
+# common pattern of the same user message sent to both ChatGPT and Claude.
+def _focal_text_is_near_duplicate(focal_text: str, accepted_texts: list[str]) -> bool:
+    if not focal_text or len(focal_text) < CROSS_PROVIDER_DEDUP_PREFIX_LENGTH:
+        return False
+    prefix = focal_text[:CROSS_PROVIDER_DEDUP_PREFIX_LENGTH]
+    for accepted in accepted_texts:
+        if accepted[:CROSS_PROVIDER_DEDUP_PREFIX_LENGTH] == prefix:
             return True
     return False
 
@@ -248,9 +287,15 @@ def _rank_candidates(
         if bm25_score <= 0.0 and exact_phrase_boost <= 0.0:
             continue
 
-        score = bm25_score + exact_phrase_boost + title_boost
-        if score <= 0.0:
+        raw_score = bm25_score + exact_phrase_boost + title_boost
+        if raw_score <= 0.0:
             continue
+
+        author_role = string_or_none(message.get("author_role"))
+        voice_factor = USER_VOICE_BOOST if author_role == "user" else ASSISTANT_VOICE_FACTOR
+        if author_role == "assistant" and is_assistant_meta_commentary(string_or_none(message.get("text")) or ""):
+            voice_factor *= ASSISTANT_META_COMMENTARY_FACTOR
+        score = raw_score * voice_factor
 
         candidates.append(
             _Candidate(

@@ -14,6 +14,10 @@ from rag.retrieval.scoring import (
 from rag.retrieval.types import (
     BM25_K1,
     BM25_B,
+    USER_VOICE_BOOST,
+    ASSISTANT_VOICE_FACTOR,
+    ASSISTANT_META_COMMENTARY_FACTOR,
+    is_assistant_meta_commentary,
     ParsedQuery,
     RetrievalFilters,
     STOPWORD_FILTER_ENABLED,
@@ -67,10 +71,14 @@ def rank_semantic_candidates(
         similarity = cosine_similarity(query_vector, record.embedding)
         if similarity <= 0.0:
             continue
+        voice_factor = USER_VOICE_BOOST if record.author_role == "user" else ASSISTANT_VOICE_FACTOR
+        if record.author_role == "assistant" and is_assistant_meta_commentary(record.text):
+            voice_factor *= ASSISTANT_META_COMMENTARY_FACTOR
+        voiced_score = similarity * voice_factor
         candidates.append(
             _Candidate(
-                score=similarity,
-                base_score=similarity,
+                score=voiced_score,
+                base_score=voiced_score,
                 recency_boost=0.0,
                 bm25_score=None,
                 semantic_similarity=round(similarity, 6),

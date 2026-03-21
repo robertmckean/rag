@@ -12,6 +12,60 @@ BM25_B = 0.75
 EXACT_PHRASE_BOOST = 1.5
 TITLE_TERM_BOOST = 0.35
 RECENCY_BOOST_MAX = 0.35
+USER_VOICE_BOOST = 1.25
+ASSISTANT_VOICE_FACTOR = 0.8
+ASSISTANT_META_COMMENTARY_FACTOR = 0.6
+
+# Opening phrases that signal assistant process text, reaction filler, or delivery mechanics.
+# Matching is case-insensitive against the first 80 characters of the message text.
+# Keep this list narrow: only patterns that are reliably low-information openers.
+ASSISTANT_META_PREFIXES = (
+    "i'd be happy to",
+    "i'd be glad to",
+    "i would be happy to",
+    "sure, i can",
+    "sure! i can",
+    "sure, let me",
+    "sure! let me",
+    "of course! ",
+    "of course, ",
+    "absolutely! ",
+    "absolutely, ",
+    "great question",
+    "great! let me",
+    "that's a great",
+    "that's a really great",
+    "certainly! ",
+    "certainly, ",
+    "here's what i",
+    "here is what i",
+    "let me help you",
+    "your formatted text file is ready",
+    "your file is ready",
+    "here's the updated",
+    "here is the updated",
+    "here's your updated",
+    "i've updated",
+    "i've created",
+    "i've generated",
+    "here are some",
+    "here are a few",
+    "based on what you've shared",
+    "based on our conversation",
+    "based on everything you've shared",
+    "thank you for sharing",
+    "thanks for sharing",
+)
+
+
+# Return True when the message text opens with a meta-commentary pattern.
+def is_assistant_meta_commentary(text: str) -> bool:
+    if not text:
+        return False
+    prefix = text[:80].lower().lstrip()
+    return any(prefix.startswith(pattern) for pattern in ASSISTANT_META_PREFIXES)
+
+
 WINDOW_RETRIEVAL_MODES = ("relevance", "newest", "oldest", "relevance_recency")
 TIMELINE_RETRIEVAL_MODE = "timeline"
 CLI_RETRIEVAL_MODES = WINDOW_RETRIEVAL_MODES + (TIMELINE_RETRIEVAL_MODE,)

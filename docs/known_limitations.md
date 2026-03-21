@@ -50,6 +50,5 @@ candidates (excluding ultra-short fragments) and focal-visible window dedup
 (preventing near-duplicate overlapping windows from dense threads).
 
 Hybrid retrieval quality still depends on model choice, artifact coverage, and
-future evaluation work. Remaining known quality gaps include cross-provider
-content deduplication and down-ranking assistant meta-commentary relative to
-primary user reflections.
+future evaluation work. See [retrieval_guidance.md](retrieval_guidance.md) for
+channel recommendations, query benchmarking guidance, and remaining quality gaps.
