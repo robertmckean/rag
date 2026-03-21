@@ -132,7 +132,7 @@ class AnsweringTests(unittest.TestCase):
         self.assertEqual(result.diagnostics.user_excerpt_count, 2)
         self.assertEqual(result.diagnostics.coverage_terms, ("guitar", "larry", "playing"))
         self.assertGreaterEqual(result.diagnostics.coverage_ratio, 1.0)
-        self.assertIn("distributed across multiple nearby excerpts", result.answer)
+        self.assertIn("partially answers the question", result.answer)
 
     # Verify that terms split across separate windows do not qualify for composed support.
     def test_conversational_memory_mode_forbids_cross_window_composition(self) -> None:

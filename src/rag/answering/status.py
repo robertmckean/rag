@@ -159,57 +159,83 @@ def detect_conflicts(evidence_items: tuple[EvidenceItem, ...], focus_terms_value
 
 
 # Generate deterministic grounded answer prose from the selected evidence and precomputed status.
+# Multi-evidence synthesis: compose across deduplicated user-preferred windows rather than
+# quoting the single strongest excerpt.
 def generate_answer_text(
     decision: _StatusDecision,
     evidence_items: tuple[EvidenceItem, ...],
     diagnostics: AnswerDiagnostics,
 ) -> str:
-    primary_excerpt = evidence_items[0].citation.excerpt if evidence_items else None
-    secondary_excerpt = evidence_items[1].citation.excerpt if len(evidence_items) > 1 else None
-
     if decision.status is AnswerStatus.INSUFFICIENT_EVIDENCE:
         return "I did not find enough relevant evidence in this run to answer that question confidently."
+
+    selected = _select_synthesis_excerpts(evidence_items)
+    if not selected:
+        return "Based on the retrieved conversation evidence, the available support is limited but relevant."
+
     if decision.status is AnswerStatus.AMBIGUOUS:
-        conflicting_bits = []
-        if primary_excerpt:
-            conflicting_bits.append(f'"{primary_excerpt}"')
-        if secondary_excerpt:
-            conflicting_bits.append(f'"{secondary_excerpt}"')
-        if conflicting_bits:
-            return (
-                "The retrieved evidence is mixed. "
-                + "Conflicting relevant excerpts include "
-                + " and ".join(conflicting_bits)
-                + "."
-            )
-        return "The retrieved evidence is mixed and does not support a single unqualified answer."
+        quoted = [f'"{e}"' for e in selected[:2]]
+        return "The retrieved evidence is mixed. Conflicting relevant excerpts include " + " and ".join(quoted) + "."
+
     if decision.status is AnswerStatus.PARTIALLY_SUPPORTED:
-        if diagnostics.composition_used and primary_excerpt and secondary_excerpt:
-            return (
-                "The retrieved evidence only partially answers the question. "
-                "Support is distributed across multiple nearby excerpts within one conversation window, including "
-                f'"{primary_excerpt}" and "{secondary_excerpt}".'
-            )
-        if diagnostics.composition_used and primary_excerpt:
-            return (
-                "The retrieved evidence only partially answers the question. "
-                "Support is distributed across nearby excerpts within one conversation window, including "
-                f'"{primary_excerpt}".'
-            )
-        if primary_excerpt:
-            return (
-                "The retrieved evidence only partially answers the question. "
-                f'The strongest relevant excerpt says "{primary_excerpt}".'
-            )
-        return "The retrieved evidence is relevant but too limited to justify a full answer."
-    if primary_excerpt and secondary_excerpt:
+        return _compose_partial_answer(selected)
+
+    return _compose_supported_answer(selected)
+
+
+# Pick the best non-redundant excerpts for answer synthesis in preference order:
+# user-authored first, then by evidence rank, with near-duplicate suppression.
+def _select_synthesis_excerpts(
+    evidence_items: tuple[EvidenceItem, ...],
+    *,
+    max_excerpts: int = 4,
+) -> list[str]:
+    user_items = [item for item in evidence_items if item.author_role == "user"]
+    assistant_items = [item for item in evidence_items if item.author_role != "user"]
+    ordered = user_items + assistant_items
+
+    selected: list[str] = []
+    for item in ordered:
+        excerpt = item.citation.excerpt
+        if not excerpt:
+            continue
+        if _is_near_duplicate_excerpt(excerpt, selected):
+            continue
+        selected.append(excerpt)
+        if len(selected) >= max_excerpts:
+            break
+    return selected
+
+
+# Detect near-duplicate excerpts by comparing normalized 60-char prefixes.
+def _is_near_duplicate_excerpt(excerpt: str, accepted: list[str]) -> bool:
+    prefix = excerpt[:60].lower().strip()
+    if len(prefix) < 30:
+        return False
+    for existing in accepted:
+        if existing[:60].lower().strip() == prefix:
+            return True
+    return False
+
+
+# Compose a supported answer from multiple grounded excerpts.
+def _compose_supported_answer(excerpts: list[str]) -> str:
+    if len(excerpts) == 1:
+        return f'Based on the retrieved evidence: "{excerpts[0]}".'
+    lines = ["Based on the retrieved evidence across multiple conversations:"]
+    for excerpt in excerpts:
+        lines.append(f'- "{excerpt}"')
+    return "\n".join(lines)
+
+
+# Compose a partially-supported answer acknowledging gaps while presenting available evidence.
+def _compose_partial_answer(excerpts: list[str]) -> str:
+    if len(excerpts) == 1:
         return (
-            "Based on the retrieved conversation evidence, the strongest supporting excerpts say "
-            f'"{primary_excerpt}" and "{secondary_excerpt}".'
+            "The retrieved evidence only partially answers the question. "
+            f'The strongest relevant excerpt says "{excerpts[0]}".'
         )
-    if primary_excerpt:
-        return (
-            "Based on the retrieved conversation evidence, the strongest supporting excerpt says "
-            f'"{primary_excerpt}".'
-        )
-    return "Based on the retrieved conversation evidence, the available support is limited but relevant."
+    lines = ["The retrieved evidence only partially answers the question. The most relevant excerpts are:"]
+    for excerpt in excerpts:
+        lines.append(f'- "{excerpt}"')
+    return "\n".join(lines)

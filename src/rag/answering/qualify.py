@@ -25,20 +25,23 @@ MIN_SUPPORT_SCORE = 0.5
 COMPOSED_SUPPORT_COVERAGE_THRESHOLD = 0.75
 QUESTION_STOPWORDS = frozenset(
     {
-        "about",
-        "did",
-        "find",
-        "have",
-        "i",
-        "me",
-        "my",
-        "said",
-        "say",
-        "show",
-        "tell",
-        "what",
-        "where",
-        "you",
+        # Pronouns and determiners
+        "a", "an", "i", "me", "my", "the", "this", "that", "you", "your",
+        # Question words
+        "about", "how", "what", "when", "where", "which", "who", "why",
+        # Common question-frame verbs (query intent, not entities)
+        "am", "are", "been", "can", "change", "conclude", "could", "describe",
+        "did", "do", "does", "explain", "feel", "find", "get", "go", "going",
+        "happen", "happened", "has", "have", "hear", "is", "know", "learn",
+        "learned", "look", "make", "mean", "said", "say", "see", "should",
+        "show", "tell", "think", "thinking", "thought", "understand", "was",
+        "were", "would",
+        # Prepositions and conjunctions that leak through tokenization
+        "after", "and", "at", "before", "between", "by", "during", "for",
+        "from", "in", "into", "of", "on", "or", "over", "through", "to",
+        "up", "with",
+        # Autobiographical query filler
+        "path", "experience", "story", "situation", "thing", "things",
     }
 )
 MIN_MEANINGFUL_FOCUS_TERM_LENGTH = 2
