@@ -12,7 +12,7 @@ import string
 
 from enum import Enum
 
-from rag.narrative.models import NarrativeReconstruction
+from rag.narrative.models import NarrativePhase, NarrativeReconstruction, NarrativeTransition
 from rag.patterns.models import PatternReport
 
 
@@ -133,7 +133,7 @@ def route_answer(
     if intent == Intent.ENTITY_SCOPED:
         entity = _detect_entity(query, report)
         assert entity is not None  # guaranteed by classify_intent
-        return _answer_entity_scoped(entity, report)
+        return _answer_entity_scoped(entity, report, narratives)
     if intent == Intent.ENTITY:
         return _answer_entity(report)
     if intent == Intent.THEME:
@@ -147,7 +147,63 @@ def route_answer(
     return _answer_unknown(report)
 
 
-def _answer_entity_scoped(entity_name: str, report: PatternReport) -> str:
+def _phase_mentions_entity(phase: NarrativePhase, entity_name: str) -> bool:
+    """Check whether *entity_name* appears as a whole word in the phase label or description."""
+    pattern = r"\b" + re.escape(entity_name) + r"\b"
+    return bool(
+        re.search(pattern, phase.label, re.IGNORECASE)
+        or re.search(pattern, phase.description, re.IGNORECASE)
+    )
+
+
+def _filter_narrative_for_entity(
+    narratives: list[NarrativeReconstruction],
+    entity_name: str,
+) -> tuple[tuple[NarrativePhase, ...], tuple[NarrativeTransition, ...]]:
+    """Filter narrative phases and transitions to those mentioning *entity_name*.
+
+    Returns (filtered_phases, scoped_transitions) across all narratives.
+    Transitions between retained phases are kept if they existed originally;
+    for retained phases that were separated by removed phases, a minimal gap
+    transition is created.
+    """
+    all_phases: list[NarrativePhase] = []
+    # Map from (from_label, to_label) to original transition for quick lookup.
+    original_transitions: dict[tuple[str, str], NarrativeTransition] = {}
+
+    for narr in narratives:
+        for phase in narr.timeline:
+            if _phase_mentions_entity(phase, entity_name):
+                all_phases.append(phase)
+        for t in narr.transitions:
+            original_transitions[(t.from_phase, t.to_phase)] = t
+
+    # Build transitions between consecutive retained phases.
+    scoped_transitions: list[NarrativeTransition] = []
+    for i in range(len(all_phases) - 1):
+        from_phase = all_phases[i]
+        to_phase = all_phases[i + 1]
+        key = (from_phase.label, to_phase.label)
+        if key in original_transitions:
+            scoped_transitions.append(original_transitions[key])
+        else:
+            # Phases were not originally adjacent — insert a gap transition.
+            scoped_transitions.append(NarrativeTransition(
+                from_phase=from_phase.label,
+                to_phase=to_phase.label,
+                description="No direct transition observed (intermediate phases filtered out)",
+                evidence_ids=(),
+                support="partially_supported",
+            ))
+
+    return tuple(all_phases), tuple(scoped_transitions)
+
+
+def _answer_entity_scoped(
+    entity_name: str,
+    report: PatternReport,
+    narratives: list[NarrativeReconstruction],
+) -> str:
     """Produce an answer scoped to a single entity using filtered data."""
     # Filter entities.
     entity_match = None
@@ -216,6 +272,32 @@ def _answer_entity_scoped(entity_name: str, report: PatternReport) -> str:
         for occ in snippets:
             date_prefix = f"[{occ.created_at}] " if occ.created_at else ""
             lines.append(f"    - {date_prefix}{occ.excerpt}")
+        lines.append("")
+
+    # Scoped timeline from narrative data.
+    scoped_phases, scoped_transitions = _filter_narrative_for_entity(
+        narratives, entity_name,
+    )
+
+    if not scoped_phases:
+        lines.append("  Timeline: no timeline data found for this entity.")
+    elif len(scoped_phases) == 1:
+        phase = scoped_phases[0]
+        date_part = f" ({phase.date_range})" if phase.date_range else ""
+        lines.append("  Timeline (1 phase):")
+        lines.append(f"    1. {phase.label}{date_part}")
+        lines.append(f"       {phase.description}")
+    else:
+        lines.append(f"  Timeline ({len(scoped_phases)} phases):")
+        for i, phase in enumerate(scoped_phases, 1):
+            date_part = f" ({phase.date_range})" if phase.date_range else ""
+            lines.append(f"    {i}. {phase.label}{date_part}")
+            lines.append(f"       {phase.description}")
+        if scoped_transitions:
+            lines.append("")
+            lines.append(f"  Transitions ({len(scoped_transitions)}):")
+            for t in scoped_transitions:
+                lines.append(f"    - {t.from_phase} → {t.to_phase}: {t.description}")
 
     return "\n".join(lines)
 

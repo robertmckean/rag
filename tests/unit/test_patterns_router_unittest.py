@@ -13,7 +13,14 @@ from rag.patterns.models import (
     TemporalBurst,
     TopicCluster,
 )
-from rag.patterns.router import Intent, classify_intent, route_answer, _detect_entity
+from rag.patterns.router import (
+    Intent,
+    classify_intent,
+    route_answer,
+    _detect_entity,
+    _filter_narrative_for_entity,
+    _phase_mentions_entity,
+)
 
 
 def _empty_report() -> PatternReport:
@@ -405,6 +412,213 @@ class EntityScopedAnswerTests(unittest.TestCase):
         answer = route_answer("what happened with Marc", report, [])
         for word in ("probably", "might", "maybe", "possibly", "I think"):
             self.assertNotIn(word, answer)
+
+
+def _multi_phase_narrative() -> NarrativeReconstruction:
+    """Narrative with 4 phases: 2 mention Marc, 1 mentions Craig, 1 mentions neither."""
+    p1 = NarrativePhase(
+        label="2025-02-15: Marc arrival",
+        description="Marc arrived at the villa and met the group.",
+        evidence_ids=("e1",),
+        date_range="2025-02-15",
+        support="supported",
+    )
+    p2 = NarrativePhase(
+        label="2025-03-01: Craig solo",
+        description="Craig went on a solo trip to the beach.",
+        evidence_ids=("e2",),
+        date_range="2025-03-01",
+        support="supported",
+    )
+    p3 = NarrativePhase(
+        label="2025-04-10: Marc reconciliation",
+        description="Marc and Benz talked through the issue.",
+        evidence_ids=("e3",),
+        date_range="2025-04-10",
+        support="supported",
+    )
+    p4 = NarrativePhase(
+        label="2025-05-20: general wrap-up",
+        description="The group discussed next steps.",
+        evidence_ids=("e4",),
+        date_range="2025-05-20",
+        support="supported",
+    )
+    t12 = NarrativeTransition(
+        from_phase="2025-02-15: Marc arrival",
+        to_phase="2025-03-01: Craig solo",
+        description="Shift from group to individual activity",
+        evidence_ids=("e1", "e2"),
+        support="partially_supported",
+    )
+    t23 = NarrativeTransition(
+        from_phase="2025-03-01: Craig solo",
+        to_phase="2025-04-10: Marc reconciliation",
+        description="Return to interpersonal focus",
+        evidence_ids=("e2", "e3"),
+        support="partially_supported",
+    )
+    t34 = NarrativeTransition(
+        from_phase="2025-04-10: Marc reconciliation",
+        to_phase="2025-05-20: general wrap-up",
+        description="Moving toward resolution",
+        evidence_ids=("e3", "e4"),
+        support="partially_supported",
+    )
+    return NarrativeReconstruction(
+        query="test",
+        summary="Test multi-phase narrative.",
+        timeline=(p1, p2, p3, p4),
+        transitions=(t12, t23, t34),
+        gaps=(),
+        limitations=(),
+        evidence_count=10,
+    )
+
+
+class NarrativePhaseFilterTests(unittest.TestCase):
+    """Tests for phase filtering by entity."""
+
+    def test_phases_with_entity_included(self) -> None:
+        narr = _multi_phase_narrative()
+        phases, _ = _filter_narrative_for_entity([narr], "Marc")
+        labels = [p.label for p in phases]
+        self.assertIn("2025-02-15: Marc arrival", labels)
+        self.assertIn("2025-04-10: Marc reconciliation", labels)
+
+    def test_phases_without_entity_excluded(self) -> None:
+        narr = _multi_phase_narrative()
+        phases, _ = _filter_narrative_for_entity([narr], "Marc")
+        labels = [p.label for p in phases]
+        self.assertNotIn("2025-03-01: Craig solo", labels)
+        self.assertNotIn("2025-05-20: general wrap-up", labels)
+
+    def test_chronological_order_preserved(self) -> None:
+        narr = _multi_phase_narrative()
+        phases, _ = _filter_narrative_for_entity([narr], "Marc")
+        self.assertEqual(len(phases), 2)
+        self.assertEqual(phases[0].label, "2025-02-15: Marc arrival")
+        self.assertEqual(phases[1].label, "2025-04-10: Marc reconciliation")
+
+    def test_entity_match_case_insensitive(self) -> None:
+        phase = NarrativePhase(
+            label="test", description="marc was mentioned here",
+            evidence_ids=("e1",), date_range=None, support="supported",
+        )
+        self.assertTrue(_phase_mentions_entity(phase, "Marc"))
+
+    def test_entity_in_label_only(self) -> None:
+        phase = NarrativePhase(
+            label="2025-01-01: Marc phase", description="Something else happened.",
+            evidence_ids=("e1",), date_range=None, support="supported",
+        )
+        self.assertTrue(_phase_mentions_entity(phase, "Marc"))
+
+    def test_no_phases_match(self) -> None:
+        narr = _multi_phase_narrative()
+        phases, transitions = _filter_narrative_for_entity([narr], "Zephyr")
+        self.assertEqual(len(phases), 0)
+        self.assertEqual(len(transitions), 0)
+
+    def test_single_phase_match(self) -> None:
+        narr = _multi_phase_narrative()
+        phases, transitions = _filter_narrative_for_entity([narr], "Craig")
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0].label, "2025-03-01: Craig solo")
+        self.assertEqual(len(transitions), 0)
+
+
+class NarrativeTransitionFilterTests(unittest.TestCase):
+    """Tests for transition handling between filtered phases."""
+
+    def test_gap_transition_for_non_adjacent_phases(self) -> None:
+        """Marc's two phases were separated by Craig's phase — should get gap transition."""
+        narr = _multi_phase_narrative()
+        _, transitions = _filter_narrative_for_entity([narr], "Marc")
+        self.assertEqual(len(transitions), 1)
+        self.assertIn("No direct transition observed", transitions[0].description)
+
+    def test_adjacent_phases_keep_original_transition(self) -> None:
+        """Benz appears in p3 description; if we add Benz to p2 too, they'd be adjacent."""
+        p1 = NarrativePhase(
+            label="phase-A", description="Benz started the conversation.",
+            evidence_ids=("e1",), date_range="2025-01-01", support="supported",
+        )
+        p2 = NarrativePhase(
+            label="phase-B", description="Benz continued the discussion.",
+            evidence_ids=("e2",), date_range="2025-01-02", support="supported",
+        )
+        original_t = NarrativeTransition(
+            from_phase="phase-A", to_phase="phase-B",
+            description="Benz deepened the topic",
+            evidence_ids=("e1", "e2"), support="partially_supported",
+        )
+        narr = NarrativeReconstruction(
+            query="test", summary="Test.", timeline=(p1, p2),
+            transitions=(original_t,), gaps=(), limitations=(), evidence_count=2,
+        )
+        _, transitions = _filter_narrative_for_entity([narr], "Benz")
+        self.assertEqual(len(transitions), 1)
+        self.assertEqual(transitions[0].description, "Benz deepened the topic")
+
+    def test_gap_transition_has_empty_evidence_ids(self) -> None:
+        narr = _multi_phase_narrative()
+        _, transitions = _filter_narrative_for_entity([narr], "Marc")
+        self.assertEqual(transitions[0].evidence_ids, ())
+
+
+class ScopedTimelineAnswerTests(unittest.TestCase):
+    """Tests for entity-scoped answers with narrative timeline."""
+
+    def test_timeline_section_present(self) -> None:
+        report = _populated_report()
+        narr = _multi_phase_narrative()
+        answer = route_answer("what happened with Marc", report, [narr])
+        self.assertIn("Timeline", answer)
+
+    def test_timeline_shows_filtered_phases(self) -> None:
+        report = _populated_report()
+        narr = _multi_phase_narrative()
+        answer = route_answer("what happened with Marc", report, [narr])
+        self.assertIn("Marc arrival", answer)
+        self.assertIn("Marc reconciliation", answer)
+
+    def test_timeline_excludes_unrelated_phases(self) -> None:
+        report = _populated_report()
+        narr = _multi_phase_narrative()
+        answer = route_answer("what happened with Marc", report, [narr])
+        self.assertNotIn("Craig solo", answer)
+        self.assertNotIn("general wrap-up", answer)
+
+    def test_timeline_no_narrative_data(self) -> None:
+        report = _populated_report()
+        answer = route_answer("what happened with Marc", report, [])
+        self.assertIn("no timeline data", answer)
+
+    def test_timeline_single_phase(self) -> None:
+        report = _populated_report()
+        narr = _multi_phase_narrative()
+        answer = route_answer("what happened with Craig", report, [narr])
+        self.assertIn("1 phase", answer)
+
+    def test_timeline_shows_transitions(self) -> None:
+        report = _populated_report()
+        narr = _multi_phase_narrative()
+        answer = route_answer("what happened with Marc", report, [narr])
+        self.assertIn("Transitions", answer)
+
+    def test_no_cross_entity_timeline_leakage(self) -> None:
+        report = _populated_report()
+        narr = _multi_phase_narrative()
+        answer = route_answer("what happened with Craig", report, [narr])
+        self.assertNotIn("Marc arrival", answer)
+        self.assertNotIn("Marc reconciliation", answer)
+
+    def test_deterministic_with_narrative(self) -> None:
+        report = _populated_report()
+        narr = _multi_phase_narrative()
+        answers = [route_answer("what happened with Marc", report, [narr]) for _ in range(5)]
+        self.assertTrue(all(a == answers[0] for a in answers))
 
 
 if __name__ == "__main__":

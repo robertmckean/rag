@@ -24,7 +24,8 @@ What works:
 - [x] Cross-cluster entity links and temporal burst detection (Phase 8)
 - [x] Deterministic query routing with 5 intent types (Phase 9)
 - [x] Entity-scoped query routing via ENTITY_SCOPED intent (Phase 10A)
-- [x] 366 tests passing
+- [x] Entity-scoped narrative timeline filtering (Phase 10B)
+- [x] 384 tests passing
 
 What does not work:
 
@@ -60,13 +61,13 @@ Prerequisite: none. Highest leverage immediate improvement.
 
 ### 10B: Entity scope in narrative
 
-- [ ] Add entity filtering to narrative phases (include phase only if entity
+- [x] Add entity filtering to narrative phases (include phase only if entity
       appears in its description via entity_terms_from_text)
-- [ ] Produce a scoped timeline: only phases mentioning the target entity
-- [ ] Wire scoped narrative into the router ENTITY_SCOPED answer formatter
-- [ ] Add test: scoped timeline excludes unrelated phases
-- [ ] Add test: scoped timeline preserves chronological order
-- [ ] Validate on real corpus: `--answer "what happened with Marc"` shows
+- [x] Produce a scoped timeline: only phases mentioning the target entity
+- [x] Wire scoped narrative into the router ENTITY_SCOPED answer formatter
+- [x] Add test: scoped timeline excludes unrelated phases
+- [x] Add test: scoped timeline preserves chronological order
+- [x] Validate on real corpus: `--answer "what happened with Marc"` shows
       Marc-only phases, not the full timeline
 
 ---
