@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from rag.patterns.models import EntityOccurrence, PatternReport, RecurringEntity
+from rag.patterns.models import EntityOccurrence, PatternReport, RecurringEntity, TopicCluster
 
 
 class EntityOccurrenceTests(unittest.TestCase):
@@ -115,6 +115,7 @@ class PatternReportTests(unittest.TestCase):
                     occurrence_count=2,
                 ),
             ),
+            clusters=(),
             evidence_count=5,
         )
 
@@ -122,6 +123,7 @@ class PatternReportTests(unittest.TestCase):
         report = self._make_report()
         self.assertEqual(report.query, "What happened with Marc?")
         self.assertEqual(len(report.entities), 1)
+        self.assertEqual(report.clusters, ())
         self.assertEqual(report.evidence_count, 5)
 
     def test_frozen(self) -> None:
@@ -149,14 +151,14 @@ class PatternReportTests(unittest.TestCase):
         self.assertEqual(occ_d["excerpt"], "Marc said hello.")
 
     def test_empty_report(self) -> None:
-        report = PatternReport(query="nothing", entities=(), evidence_count=0)
+        report = PatternReport(query="nothing", entities=(), clusters=(), evidence_count=0)
         d = report.to_dict()
         self.assertEqual(d["query"], "nothing")
         self.assertEqual(d["entities"], [])
         self.assertEqual(d["evidence_count"], 0)
 
     def test_empty_report_construction(self) -> None:
-        report = PatternReport(query="nothing", entities=(), evidence_count=0)
+        report = PatternReport(query="nothing", entities=(), clusters=(), evidence_count=0)
         self.assertEqual(len(report.entities), 0)
         self.assertEqual(report.evidence_count, 0)
 
@@ -169,11 +171,84 @@ class PatternReportTests(unittest.TestCase):
                 RecurringEntity("Marc", (), 0),
                 RecurringEntity("Benz", (), 0),
             ),
+            clusters=(),
             evidence_count=0,
         )
         d = report.to_dict()
         names = [e["name"] for e in d["entities"]]
         self.assertEqual(names, ["Zeno", "Marc", "Benz"])
+
+
+class TopicClusterTests(unittest.TestCase):
+    """Tests for TopicCluster construction and serialization."""
+
+    def _make_cluster(self) -> TopicCluster:
+        return TopicCluster(
+            label="Marc, Craig: meeting, villa",
+            phase_labels=("2025-02-04: Marc, Craig", "2025-02-13: Craig, Marc"),
+            evidence_ids=("e1", "e3", "e7", "e11"),
+            date_range="2025-02-04 to 2025-02-13",
+            key_entities=("Marc", "Craig"),
+            key_terms=("meeting", "villa"),
+            phase_count=2,
+        )
+
+    def test_construction(self) -> None:
+        cluster = self._make_cluster()
+        self.assertEqual(cluster.label, "Marc, Craig: meeting, villa")
+        self.assertEqual(cluster.phase_count, 2)
+        self.assertEqual(len(cluster.phase_labels), 2)
+        self.assertEqual(len(cluster.evidence_ids), 4)
+
+    def test_frozen(self) -> None:
+        cluster = self._make_cluster()
+        with self.assertRaises(AttributeError):
+            cluster.label = "changed"  # type: ignore[misc]
+
+    def test_to_dict(self) -> None:
+        cluster = self._make_cluster()
+        d = cluster.to_dict()
+        self.assertEqual(d["label"], "Marc, Craig: meeting, villa")
+        self.assertEqual(d["phase_count"], 2)
+        self.assertIsInstance(d["phase_labels"], list)
+        self.assertIsInstance(d["evidence_ids"], list)
+        self.assertIsInstance(d["key_entities"], list)
+        self.assertIsInstance(d["key_terms"], list)
+
+    def test_to_dict_roundtrip_values(self) -> None:
+        cluster = self._make_cluster()
+        d = cluster.to_dict()
+        self.assertEqual(d["phase_labels"], ["2025-02-04: Marc, Craig", "2025-02-13: Craig, Marc"])
+        self.assertEqual(d["evidence_ids"], ["e1", "e3", "e7", "e11"])
+        self.assertEqual(d["date_range"], "2025-02-04 to 2025-02-13")
+        self.assertEqual(d["key_entities"], ["Marc", "Craig"])
+        self.assertEqual(d["key_terms"], ["meeting", "villa"])
+
+    def test_null_date_range(self) -> None:
+        cluster = TopicCluster(
+            label="test", phase_labels=(), evidence_ids=(),
+            date_range=None, key_entities=(), key_terms=(), phase_count=0,
+        )
+        d = cluster.to_dict()
+        self.assertIsNone(d["date_range"])
+
+    def test_pattern_report_with_clusters(self) -> None:
+        """PatternReport serializes clusters alongside entities."""
+        cluster = self._make_cluster()
+        report = PatternReport(
+            query="test",
+            entities=(),
+            clusters=(cluster,),
+            evidence_count=5,
+        )
+        d = report.to_dict()
+        self.assertEqual(len(d["clusters"]), 1)
+        self.assertEqual(d["clusters"][0]["label"], "Marc, Craig: meeting, villa")
+
+    def test_empty_clusters_in_report(self) -> None:
+        report = PatternReport(query="test", entities=(), clusters=(), evidence_count=0)
+        d = report.to_dict()
+        self.assertEqual(d["clusters"], [])
 
 
 if __name__ == "__main__":

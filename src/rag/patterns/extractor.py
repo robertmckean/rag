@@ -1,22 +1,34 @@
-"""Deterministic recurring-entity extraction from narrative reconstructions.
+"""Deterministic pattern extraction from narrative reconstructions.
 
-Scans one or more ``NarrativeReconstruction`` objects and identifies named
-entities that appear across 2+ distinct narrative phases.  Applies a static
-alias map to unconditionally merge known spelling variants (e.g. Mark → Marc).
-Explicit aliases are authoritative — co-occurrence in the same phase does not
-block the merge.  No fuzzy matching, LLM inference, or automatic alias
-discovery.
+Extracts recurring entities and topic clusters from one or more
+``NarrativeReconstruction`` objects.  Entity aliases are merged via an
+explicit static map.  Topic clusters are built by agglomerative term-overlap
+merging across narrative phases.  No LLM inference or embedding-based
+clustering.
 """
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import Sequence
 
-from rag.narrative.builder import entity_terms_from_text
+from rag.narrative.builder import content_terms_from_text, entity_terms_from_text
 from rag.narrative.models import NarrativePhase, NarrativeReconstruction
-from rag.patterns.aliases import canonicalize_entity
-from rag.patterns.models import EntityOccurrence, PatternReport, RecurringEntity
+from rag.patterns.aliases import ENTITY_ALIASES, canonicalize_entity
+from rag.patterns.models import (
+    EntityOccurrence,
+    PatternReport,
+    RecurringEntity,
+    TopicCluster,
+)
+
+_CLUSTER_SIMILARITY_THRESHOLD = 0.10
+
+# Terms that appear in phase descriptions due to formatting, not content.
+_DESCRIPTION_NOISE = frozenset({"user", "assistant", "unknown"})
+
+_SNIPPET_MAX = 120
 
 
 def _first_date_from_range(date_range: str | None) -> str | None:
@@ -26,12 +38,59 @@ def _first_date_from_range(date_range: str | None) -> str | None:
     return date_range[:10]
 
 
+def _extract_snippet(entity: str, description: str) -> str | None:
+    """Find a content snippet centered on *entity* in a phase description.
+
+    The description uses pipe-separated segments like:
+        ``(date) [role] "excerpt text" | (date) [role] "excerpt text"``
+
+    Returns a ~120-char window around the first mention, or None if not found.
+    """
+    # Search for the canonical name and any known aliases.
+    search_names = {entity}
+    for variant, canonical in ENTITY_ALIASES.items():
+        if canonical == entity:
+            search_names.add(variant)
+    # Also check if entity itself is a variant.
+    canonical_of = ENTITY_ALIASES.get(entity)
+    if canonical_of:
+        search_names.add(canonical_of)
+
+    # Find the first segment containing any of the search names.
+    segments = description.split(" | ")
+    for segment in segments:
+        for name in search_names:
+            idx = segment.find(name)
+            if idx == -1:
+                continue
+            # Strip the leading (date) [role] prefix to get raw text.
+            text = re.sub(r"^\([^)]*\)\s*\[[^\]]*\]\s*\"?", "", segment)
+            text = text.rstrip('"')
+            # Find entity position in the cleaned text.
+            text_idx = text.find(name)
+            if text_idx == -1:
+                # Entity was in the prefix; use text from the start.
+                text_idx = 0
+            # Window: center on the entity mention.
+            half = _SNIPPET_MAX // 2
+            start = max(0, text_idx - half)
+            end = min(len(text), text_idx + len(name) + half)
+            snippet = text[start:end].strip()
+            if start > 0:
+                snippet = "..." + snippet
+            if end < len(text):
+                snippet = snippet + "..."
+            return snippet
+    return None
+
+
 def _occurrence_from_phase(entity: str, phase: NarrativePhase) -> EntityOccurrence:
     """Build one EntityOccurrence grounded in a narrative phase."""
+    snippet = _extract_snippet(entity, phase.description)
     return EntityOccurrence(
         evidence_id=phase.evidence_ids[0] if phase.evidence_ids else "",
         created_at=_first_date_from_range(phase.date_range),
-        excerpt=phase.label,
+        excerpt=snippet if snippet else phase.label,
     )
 
 
@@ -50,7 +109,7 @@ def extract_recurring_entities(
     PatternReport with only recurring entities (2+ phase appearances).
     """
     if not narratives:
-        return PatternReport(query="", entities=(), evidence_count=0)
+        return PatternReport(query="", entities=(), clusters=(), evidence_count=0)
 
     # Track entity -> list of (phase, narrative_index) to deduplicate same phase.
     entity_phases: dict[str, list[tuple[NarrativePhase, int]]] = defaultdict(list)
@@ -106,8 +165,168 @@ def extract_recurring_entities(
 
     total_evidence = sum(n.evidence_count for n in narratives)
 
+    # Extract topic clusters from all phases across narratives.
+    all_phases: list[NarrativePhase] = []
+    query_term_set: set[str] = set()
+    for n in narratives:
+        for term in n.query.lower().split():
+            if len(term) >= 4:
+                query_term_set.add(term)
+        for phase in n.timeline:
+            if phase not in all_phases:
+                all_phases.append(phase)
+
+    clusters = _extract_topic_clusters(all_phases, query_term_set)
+
     return PatternReport(
         query=query,
         entities=tuple(recurring),
+        clusters=tuple(clusters),
         evidence_count=total_evidence,
     )
+
+
+# ---------------------------------------------------------------------------
+# Topic clustering
+# ---------------------------------------------------------------------------
+
+
+def _phase_term_set(phase: NarrativePhase, query_terms: set[str]) -> set[str]:
+    """Build a combined content + entity term set for a phase, excluding query terms."""
+    content = content_terms_from_text(phase.description)
+    entities = {e.lower() for e in entity_terms_from_text(phase.description)}
+    return (content | entities) - query_terms - _DESCRIPTION_NOISE
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _cluster_date_range(phases: list[NarrativePhase]) -> str | None:
+    """Compute date range across cluster member phases."""
+    dates: list[str] = []
+    for phase in phases:
+        if phase.date_range:
+            # Extract first and last dates from "YYYY-MM-DD" or "YYYY-MM-DD to YYYY-MM-DD".
+            if " to " in phase.date_range:
+                parts = phase.date_range.split(" to ")
+                dates.append(parts[0][:10])
+                dates.append(parts[-1][:10])
+            elif len(phase.date_range) >= 10:
+                dates.append(phase.date_range[:10])
+    if not dates:
+        return None
+    dates.sort()
+    if dates[0] == dates[-1]:
+        return dates[0]
+    return f"{dates[0]} to {dates[-1]}"
+
+
+def _build_cluster_label(
+    phases: list[NarrativePhase],
+    query_terms: set[str],
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Build a deterministic label, key_entities, and key_terms for a cluster."""
+    entity_counts: dict[str, int] = defaultdict(int)
+    term_counts: dict[str, int] = defaultdict(int)
+
+    for phase in phases:
+        for ent in entity_terms_from_text(phase.description):
+            canonical = canonicalize_entity(ent)
+            entity_counts[canonical] += 1
+        for term in content_terms_from_text(phase.description):
+            if term not in query_terms and term not in _DESCRIPTION_NOISE:
+                term_counts[term] += 1
+
+    top_entities = sorted(entity_counts.items(), key=lambda x: (-x[1], x[0]))[:2]
+    key_entities = tuple(e[0] for e in top_entities)
+
+    # Exclude entity names (lowercased) from key_terms to avoid redundancy.
+    entity_name_lower = {e.lower() for e in key_entities}
+    top_terms = sorted(
+        ((t, c) for t, c in term_counts.items() if t not in entity_name_lower),
+        key=lambda x: (-x[1], x[0]),
+    )[:2]
+    key_terms = tuple(t[0] for t in top_terms)
+
+    label_parts: list[str] = []
+    if key_entities:
+        label_parts.append(", ".join(key_entities))
+    if key_terms:
+        label_parts.append(", ".join(key_terms))
+    label = ": ".join(label_parts) if label_parts else "Cluster"
+
+    return label, key_entities, key_terms
+
+
+def _extract_topic_clusters(
+    phases: list[NarrativePhase],
+    query_terms: set[str],
+) -> list[TopicCluster]:
+    """Agglomerative term-overlap clustering over narrative phases."""
+    if len(phases) < 2:
+        return []
+
+    # Compute term sets per phase.
+    term_sets = [_phase_term_set(p, query_terms) for p in phases]
+
+    # Each cluster is a list of phase indices.
+    clusters: list[list[int]] = [[i] for i in range(len(phases))]
+    # Merged term sets per cluster.
+    cluster_terms: list[set[str]] = [ts.copy() for ts in term_sets]
+
+    # Greedy agglomerative merge.
+    while True:
+        best_sim = 0.0
+        best_i = -1
+        best_j = -1
+
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                sim = _jaccard(cluster_terms[i], cluster_terms[j])
+                if sim > best_sim:
+                    best_sim = sim
+                    best_i = i
+                    best_j = j
+
+        if best_sim < _CLUSTER_SIMILARITY_THRESHOLD:
+            break
+
+        # Merge j into i.
+        clusters[best_i].extend(clusters[best_j])
+        cluster_terms[best_i] |= cluster_terms[best_j]
+        del clusters[best_j]
+        del cluster_terms[best_j]
+
+    # Build TopicCluster objects for clusters with 2+ phases.
+    result: list[TopicCluster] = []
+    for cluster_indices in clusters:
+        if len(cluster_indices) < 2:
+            continue
+
+        member_phases = [phases[i] for i in cluster_indices]
+        label, key_entities, key_terms = _build_cluster_label(member_phases, query_terms)
+
+        all_evidence_ids: list[str] = []
+        seen_eids: set[str] = set()
+        for phase in member_phases:
+            for eid in phase.evidence_ids:
+                if eid not in seen_eids:
+                    all_evidence_ids.append(eid)
+                    seen_eids.add(eid)
+
+        result.append(TopicCluster(
+            label=label,
+            phase_labels=tuple(p.label for p in member_phases),
+            evidence_ids=tuple(all_evidence_ids),
+            date_range=_cluster_date_range(member_phases),
+            key_entities=key_entities,
+            key_terms=key_terms,
+            phase_count=len(member_phases),
+        ))
+
+    # Deterministic ordering: by phase_count desc, then label asc.
+    result.sort(key=lambda c: (-c.phase_count, c.label))
+    return result

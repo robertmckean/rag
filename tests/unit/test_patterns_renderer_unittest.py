@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from rag.patterns.models import EntityOccurrence, PatternReport, RecurringEntity
+from rag.patterns.models import EntityOccurrence, PatternReport, RecurringEntity, TopicCluster
 from rag.patterns.renderer import render_json, render_text
 
 
@@ -32,12 +32,13 @@ def _make_report() -> PatternReport:
                 occurrence_count=2,
             ),
         ),
+        clusters=(),
         evidence_count=5,
     )
 
 
 def _make_empty_report() -> PatternReport:
-    return PatternReport(query="nothing", entities=(), evidence_count=0)
+    return PatternReport(query="nothing", entities=(), clusters=(), evidence_count=0)
 
 
 class JsonRenderTests(unittest.TestCase):
@@ -142,6 +143,62 @@ class TextRenderTests(unittest.TestCase):
         output = render_text(_make_report())
         self.assertIn("2025-01-15: Marc", output)
         self.assertIn("Phase (evidence e5)", output)
+
+
+def _make_cluster_report() -> PatternReport:
+    """Report with entities and clusters."""
+    cluster = TopicCluster(
+        label="Marc, Craig: villa, drama",
+        phase_labels=("2025-01-01: Marc, Craig", "2025-01-05: Craig, Marc"),
+        evidence_ids=("e1", "e2", "e3"),
+        date_range="2025-01-01 to 2025-01-05",
+        key_entities=("Marc", "Craig"),
+        key_terms=("villa", "drama"),
+        phase_count=2,
+    )
+    return PatternReport(
+        query="What about Marc?",
+        entities=(),
+        clusters=(cluster,),
+        evidence_count=3,
+    )
+
+
+class ClusterRenderTests(unittest.TestCase):
+    """Tests for cluster rendering."""
+
+    def test_json_clusters_present(self) -> None:
+        output = render_json(_make_cluster_report())
+        d = json.loads(output)
+        self.assertEqual(len(d["clusters"]), 1)
+        c = d["clusters"][0]
+        self.assertEqual(c["label"], "Marc, Craig: villa, drama")
+        self.assertEqual(c["phase_count"], 2)
+
+    def test_text_clusters_rendered(self) -> None:
+        output = render_text(_make_cluster_report())
+        self.assertIn("Topic clusters: 1", output)
+        self.assertIn("[1] Marc, Craig: villa, drama", output)
+        self.assertIn("2 phases", output)
+        self.assertIn("Entities: Marc, Craig", output)
+        self.assertIn("Terms: villa, drama", output)
+
+    def test_text_cluster_date_range(self) -> None:
+        output = render_text(_make_cluster_report())
+        self.assertIn("(2025-01-01 to 2025-01-05)", output)
+
+    def test_text_cluster_evidence_ids(self) -> None:
+        output = render_text(_make_cluster_report())
+        self.assertIn("Evidence: e1, e2, e3", output)
+
+    def test_text_no_clusters_section_when_empty(self) -> None:
+        output = render_text(_make_report())
+        self.assertNotIn("Topic clusters:", output)
+
+    def test_json_empty_clusters(self) -> None:
+        output = render_json(_make_report())
+        d = json.loads(output)
+        self.assertEqual(d["clusters"], [])
 
 
 if __name__ == "__main__":

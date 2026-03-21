@@ -27,7 +27,8 @@ retrieved evidence, and extracts recurring-entity patterns across narratives.
   with configurable phase grouping, transition detection, gap detection, and
   limitation reporting
 - Phase 7 supports recurring-entity pattern extraction across narratives with
-  explicit alias normalization and deterministic output
+  explicit alias normalization, content snippets, deterministic topic clustering
+  via agglomerative term-overlap merging, and deterministic output
 - Hybrid retrieval is now the active retrieval extension path; BM25 remains the
   lexical baseline and semantic retrieval is additive rather than a replacement
 - Prefer the current code in `src/rag/` and the run artifacts under
@@ -55,7 +56,8 @@ retrieved evidence, and extracts recurring-entity patterns across narratives.
 - `src/rag/narrative/`
   Phase 6 grounded narrative reconstruction from retrieved evidence
 - `src/rag/patterns/`
-  Phase 7 recurring-entity pattern extraction with alias normalization
+  Phase 7 recurring-entity pattern extraction with alias normalization and
+  deterministic topic clustering
 - `src/rag/cli/`
   CLI entry points for inspection, normalization, analysis, retrieval, answers,
   evals, narrative reconstruction, and pattern extraction

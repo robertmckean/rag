@@ -139,13 +139,21 @@ _COHERENCE_STOPWORDS = frozenset({
 })
 
 
-def _excerpt_terms(item: EvidenceItem) -> set[str]:
-    """Extract lowercase content words (4+ chars, no stopwords) from an evidence excerpt."""
+def content_terms_from_text(text: str) -> set[str]:
+    """Extract lowercase content words (4+ chars, no stopwords) from arbitrary text.
+
+    Shared helper used by both narrative grouping and topic clustering.
+    """
     return {
         w.lower()
-        for w in re.findall(r"[A-Za-z]{4,}", item.citation.excerpt)
+        for w in re.findall(r"[A-Za-z]{4,}", text)
         if w.lower() not in _COHERENCE_STOPWORDS
     }
+
+
+def _excerpt_terms(item: EvidenceItem) -> set[str]:
+    """Extract lowercase content words (4+ chars, no stopwords) from an evidence excerpt."""
+    return content_terms_from_text(item.citation.excerpt)
 
 
 _LABEL_NOISE_WORDS = frozenset({
