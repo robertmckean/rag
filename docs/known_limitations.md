@@ -44,6 +44,12 @@ BM25 tuning alone.
 This limitation is not expected to be solved by more BM25 tweaking, ranking
 adjustments, or answer-layer prompt changes alone.
 
-Phase 4A addresses it by adding embeddings as a second retrieval channel, but
-the quality of hybrid retrieval will still depend on model choice, artifact
-coverage, and future evaluation work.
+Phase 4A addresses it by adding embeddings as a second retrieval channel.
+Phase 4B adds retrieval quality filters: a minimum token count for semantic
+candidates (excluding ultra-short fragments) and focal-visible window dedup
+(preventing near-duplicate overlapping windows from dense threads).
+
+Hybrid retrieval quality still depends on model choice, artifact coverage, and
+future evaluation work. Remaining known quality gaps include cross-provider
+content deduplication and down-ranking assistant meta-commentary relative to
+primary user reflections.

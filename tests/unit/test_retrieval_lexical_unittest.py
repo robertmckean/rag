@@ -117,31 +117,32 @@ class RetrievalLexicalTests(unittest.TestCase):
         self.assertGreater(scoring_features["final_score"], scoring_features["bm25_score"])
 
     # Verify that the phrase and title boosts stay secondary to BM25 relevance.
+    # The 4-message fixture conversation fits in one window so focal-visible dedup yields 1 result.
     def test_phrase_and_title_boosts_do_not_override_base_relevance(self) -> None:
         results = retrieve_message_windows(self.run_dir, "resume leadership", limit=5)
 
+        self.assertEqual(len(results), 1)
         self.assertEqual(results[0].focal_message_id, "chatgpt:message:msg-assistant-1")
-        self.assertGreater(results[0].score, results[-1].score)
-        self.assertEqual(results[-1].focal_message_id, "chatgpt:message:msg-user-2")
+        self.assertGreater(results[0].score, 0.0)
 
-    # Verify that newest mode reorders matching windows by descending focal timestamp.
+    # Verify that newest mode selects the most recent focal message first.
+    # The 4-message fixture conversation fits in one window so focal-visible dedup yields 1 result.
     def test_newest_mode_orders_by_descending_timestamp(self) -> None:
         results = retrieve_message_windows(self.run_dir, "resume leadership", limit=5, mode="newest")
 
         self.assertEqual([result.focal_message_id for result in results], [
             "chatgpt:message:msg-user-2",
-            "chatgpt:message:msg-assistant-1",
         ])
         self.assertEqual(results[0].match_basis["scoring_features"]["chronological_rank_basis"], "created_at_desc")
         self.assertEqual(results[0].match_basis["result_view"], "contextual_window")
 
-    # Verify that oldest mode reorders matching windows by ascending focal timestamp.
+    # Verify that oldest mode selects the earliest focal message first.
+    # The 4-message fixture conversation fits in one window so focal-visible dedup yields 1 result.
     def test_oldest_mode_orders_by_ascending_timestamp(self) -> None:
         results = retrieve_message_windows(self.run_dir, "resume leadership", limit=5, mode="oldest")
 
         self.assertEqual([result.focal_message_id for result in results], [
             "chatgpt:message:msg-user-1",
-            "chatgpt:message:msg-user-2",
         ])
         self.assertEqual(results[0].match_basis["scoring_features"]["chronological_rank_basis"], "created_at_asc")
         self.assertEqual(results[0].match_basis["result_view"], "contextual_window")

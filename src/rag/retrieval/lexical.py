@@ -139,7 +139,7 @@ def search_loaded_run(
     ordered_candidates = apply_retrieval_mode(candidates, mode)
 
     results: list[RankedResult] = []
-    seen_window_keys: set[tuple[str, int, int]] = set()
+    accepted_windows: dict[str, list[tuple[int, int]]] = {}
 
     for candidate in ordered_candidates:
         result = _build_window_result(
@@ -150,19 +150,33 @@ def search_loaded_run(
             rank=len(results) + 1,
             channel=channel,
         )
-        window_key = (
-            result.conversation_id,
-            result.window_start_sequence_index,
-            result.window_end_sequence_index,
-        )
-        if window_key in seen_window_keys:
+        if _focal_already_visible(result, accepted_windows):
             continue
-        seen_window_keys.add(window_key)
+        accepted_windows.setdefault(result.conversation_id, []).append(
+            (result.window_start_sequence_index, result.window_end_sequence_index)
+        )
         results.append(result)
         if len(results) >= limit:
             break
 
     return tuple(results)
+
+
+# Skip a candidate whose focal message is already visible inside an accepted window.
+# This prevents near-duplicate windows from dense conversation threads without rejecting
+# legitimately distinct windows whose edges happen to share a few context messages.
+def _focal_already_visible(
+    result: RankedResult,
+    accepted_windows: dict[str, list[tuple[int, int]]],
+) -> bool:
+    prior_ranges = accepted_windows.get(result.conversation_id)
+    if not prior_ranges:
+        return False
+    focal = result.focal_sequence_index
+    for accepted_start, accepted_end in prior_ranges:
+        if accepted_start <= focal <= accepted_end:
+            return True
+    return False
 
 
 # Execute lexical retrieval against a loaded run and return focal-message timeline results.

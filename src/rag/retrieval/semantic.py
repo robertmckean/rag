@@ -20,6 +20,10 @@ from rag.retrieval.types import (
     _Candidate,
 )
 
+# Semantic candidates with fewer tokens than this threshold are excluded from ranking.
+# Short messages like "Larry." produce deceptively high cosine similarity without useful context.
+SEMANTIC_MIN_TOKEN_COUNT = 4
+
 
 # Rank message-level candidates with stored embeddings and query cosine similarity.
 def rank_semantic_candidates(
@@ -56,6 +60,9 @@ def rank_semantic_candidates(
     for record in matching_records:
         message = loaded_run.message_by_id.get(record.message_id)
         if message is None or not message_matches_filters_fn(message, filters):
+            continue
+        record_tokens = tokenize_query(record.text)
+        if len(record_tokens) < SEMANTIC_MIN_TOKEN_COUNT:
             continue
         similarity = cosine_similarity(query_vector, record.embedding)
         if similarity <= 0.0:
