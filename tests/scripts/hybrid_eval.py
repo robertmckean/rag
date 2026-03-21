@@ -1,4 +1,12 @@
-"""Side-by-side evaluation of deterministic vs hybrid synthesis on Phase 5 benchmarks."""
+"""Classified evaluation of deterministic vs hybrid synthesis on Phase 5 benchmarks.
+
+Runs both paths on each frozen benchmark fixture and classifies the hybrid output as:
+  valid      — meets all property constraints
+  degraded   — worse than deterministic (less grounded, missing dates, timeline loss)
+  invalid    — violates constraints (new entities, citation overflow)
+  equivalent — valid hybrid that restates deterministic content differently
+  fallback   — LLM synthesis failed, fell back to deterministic
+"""
 
 from __future__ import annotations
 
@@ -10,6 +18,7 @@ import sys
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from rag.answering.generator_llm import LLMSynthesisRequest, synthesize_answer_with_llm
+from rag.answering.hybrid_validation import validate_hybrid_output
 from rag.answering.models import AnswerStatus, Citation, EvidenceItem
 from rag.answering.status import classify_answer_status, generate_answer_text
 
@@ -75,7 +84,10 @@ def main() -> None:
     fixtures_dir = "tests/fixtures/phase5_benchmarks"
     fixtures = sorted(os.listdir(fixtures_dir))
 
-    print("# Hybrid vs Deterministic Evaluation - Phase 5 Benchmarks")
+    counts = {"valid": 0, "degraded": 0, "invalid": 0, "equivalent": 0, "fallback": 0}
+    total = 0
+
+    print("# Hybrid Synthesis Evaluation - Phase 5 Benchmarks")
     print()
 
     for fname in fixtures:
@@ -85,6 +97,7 @@ def main() -> None:
 
         query = data["query"]
         evidence = _load_evidence(data)
+        total += 1
 
         # Deterministic path
         decision = classify_answer_status(query, _FakeQual(evidence))
@@ -99,26 +112,52 @@ def main() -> None:
             conflicts=(),
             hybrid=True,
         )
+
+        hybrid_answer = ""
+        hybrid_citations: tuple[str, ...] = ()
+        classification = "fallback"
+
         try:
             result = synthesize_answer_with_llm(request)
             hybrid_answer = result.answer_text
             hybrid_citations = result.citation_ids
-            hybrid_status = "VALIDATED"
-        except Exception as exc:
-            hybrid_answer = f"(fallback: {exc})"
-            hybrid_citations = ()
-            hybrid_status = "FALLBACK"
+
+            # Validate with property checks
+            validation = validate_hybrid_output(
+                answer_text=hybrid_answer,
+                citation_ids=hybrid_citations,
+                query=query,
+                evidence_items=evidence,
+                answer_status=AnswerStatus.SUPPORTED,
+            )
+            classification = validation.classification
+        except Exception:
+            classification = "fallback"
+
+        counts[classification] += 1
 
         print("=" * 80)
         print(f"QUERY: {query}")
-        print(f"Det status: {decision.status.value}")
+        print(f"CLASSIFICATION: {classification}")
         print()
         print("DETERMINISTIC:")
         print(det_answer)
         print()
-        print(f"HYBRID ({hybrid_status}, citations={hybrid_citations}):")
-        print(hybrid_answer)
+        if classification == "fallback":
+            print("HYBRID: (fell back to deterministic)")
+        else:
+            print(f"HYBRID ({classification}, citations={hybrid_citations}):")
+            print(hybrid_answer)
+            if classification != "valid":
+                print(f"  Failures: {validation.failures}")
         print()
+
+    print("=" * 80)
+    print("SUMMARY")
+    print(f"  Total: {total}")
+    for cls in ("valid", "degraded", "invalid", "equivalent", "fallback"):
+        print(f"  {cls}: {counts[cls]}")
+    print()
 
 
 if __name__ == "__main__":

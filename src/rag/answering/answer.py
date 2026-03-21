@@ -134,8 +134,12 @@ def render_answer_result(result: AnswerResult) -> str:
         f"retrieval_mode: {result.retrieval_summary.retrieval_mode}",
         f"grounding_mode: {result.request.grounding_mode}",
         f"answer_status: {result.answer_status.value}",
-        f"answer: {result.answer}",
     ]
+    if result.synthesis_mode.endswith("_fallback"):
+        lines.append(f"synthesis: {result.synthesis_mode} (hybrid synthesis failed validation, using deterministic output)")
+    elif result.synthesis_mode != "deterministic":
+        lines.append(f"synthesis: {result.synthesis_mode}")
+    lines.append(f"answer: {result.answer}")
     if result.gaps:
         lines.append("gaps:")
         for gap in result.gaps:
@@ -204,7 +208,19 @@ def _apply_optional_llm_synthesis(
         )
     except Exception as exc:
         logger.warning("LLM synthesis (%s) failed, falling back to deterministic answer: %s", mode_label, exc)
-        return result
+        return AnswerResult(
+            request=result.request,
+            query=result.query,
+            answer_status=result.answer_status,
+            answer=result.answer,
+            evidence_used=result.evidence_used,
+            gaps=result.gaps,
+            conflicts=result.conflicts,
+            citations=result.citations,
+            retrieval_summary=result.retrieval_summary,
+            diagnostics=result.diagnostics,
+            synthesis_mode=f"{mode_label}_fallback",
+        )
 
     citations_by_id = {f"e{item.rank}": item.citation for item in result.evidence_used}
     synthesized_citations = tuple(
@@ -223,6 +239,7 @@ def _apply_optional_llm_synthesis(
         citations=synthesized_citations or result.citations,
         retrieval_summary=result.retrieval_summary,
         diagnostics=result.diagnostics,
+        synthesis_mode=mode_label,
     )
 
 

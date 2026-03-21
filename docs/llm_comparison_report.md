@@ -1,159 +1,124 @@
-# LLM Synthesis Comparison Report
+# Hybrid Synthesis Evaluation Report
 
 Date: 2026-03-21
-Benchmark version: v0.5.1 (frozen Phase 5 fixtures, v0.4.6 retrieval)
+Benchmark version: v0.5.2 (frozen Phase 5 fixtures, v0.4.6 retrieval)
 LLM model: gpt-5-mini (default)
 
 ## Executive Summary
 
-Three synthesis paths were evaluated against 5 frozen benchmark queries:
+After prompt constraint refinement and property-based validation, the hybrid
+synthesis path achieves **5/5 valid** on the frozen benchmark set. Zero
+fallbacks, zero invalid outputs, zero degraded outputs.
 
-| Path | Description | Validation rate | Voice | Dates | Grounding |
-|------|-------------|-----------------|-------|-------|-----------|
-| **Deterministic** | Quote-based, chronological bullets | 100% | User's own words | Preserved | Direct quotes |
-| **--llm (rewrite)** | LLM paraphrase of evidence | 0% pre-fix, ~60% post-fix | Voice erased | Dropped | Paraphrase |
-| **--hybrid (new)** | LLM-compressed narrative preserving voice/dates | 80% (4/5) | User voice quoted | Preserved | Quoted + summarized |
+| Metric | v0.5.1 | v0.5.2 (this) |
+|--------|--------|---------------|
+| Valid | 4/5 (80%) | 5/5 (100%) |
+| Fallback | 1/5 (20%) | 0/5 (0%) |
+| Invalid | 0/5 | 0/5 |
+| Degraded | 0/5 | 0/5 |
 
-**Validator bug (fixed):** `_entity_surface_forms()` used a naive capitalized-word
-regex that flagged sentence-initial words ("Because", "From", "You") as unseen
-entities. Fixed by splitting into permissive extraction (for the allowed set) and
-strict mid-sentence-only extraction (for the answer check), plus a non-entity
-word list and possessive normalization.
+## Property-Based Validation
 
-**Fallback logging (added):** `_apply_optional_llm_synthesis` now logs a WARNING
-when LLM synthesis fails, replacing the previous silent fallback.
+Each hybrid output is validated against five structural properties:
 
-**Hybrid mode (new):** `--hybrid` CLI flag sends a constrained prompt that
-instructs the LLM to preserve user voice, include dates chronologically, and
-quote rather than paraphrase.
+1. **No new entities** — every entity in the answer appears in the evidence or query
+2. **Dates preserved** — when evidence spans multiple dates, at least one timestamp
+   appears in the answer
+3. **Evidence bounded** — citation count does not exceed evidence count, all IDs valid
+4. **Status not inflated** — partially_supported answers are not presented as definitive
+5. **Evidence grounding** — at least one 4-word n-gram from evidence appears in the answer
 
-## Hybrid vs Deterministic: Per-Query Results
+Outputs are classified as:
+- **valid** — all properties pass
+- **degraded** — dates missing or evidence grounding absent
+- **invalid** — new entities or citation overflow
+- **fallback** — LLM synthesis failed, fell back to deterministic
 
-### 1. "what did I conclude about Butters" -- VALIDATED
+## Per-Query Results
 
-**Hybrid:**
-> On 2026-01-20 you wrote: "I could just start ignoring butters, but maybe I
-> should send him something similar. I could connect him to the villa and my need
-> for distance. I was thinking about what makes butters unlikab" -- so your
-> conclusion was that you might "start ignoring butters", considered sending him
-> "something similar", and connected him to "the villa" and your "need for
-> distance".
+### 1. "what did I conclude about Butters" — VALID
 
-| Dimension | Deterministic | Hybrid |
-|-----------|--------------|--------|
-| Grounding | 4 direct quotes | Quotes key phrases from evidence |
-| Chronology | 4 dated bullets | Date preserved, single-excerpt focus |
-| Voice | Verbatim | Quotes user phrases within narrative |
-| Compression | 4 lines | 1 paragraph, tighter |
-| Narrative | List of excerpts | Coherent conclusion statement |
+> You wrote (created_at: 2026-01-20): "OK… Next! I could just start ignoring
+> butters, but maybe I should send him something similar. I could connect him to
+> the villa and my need for distance." The excerpt is truncated.
 
-### 2. "what did I learn about Marc" -- VALIDATED
+Properties: entities OK, dates OK, bounded OK, grounding OK.
 
-**Hybrid:**
-> 2025-02-07: You asked, "How should I open the meeting with Marc and Craig?"
-> 2025-02-12: You asked, "Give me additional suggestions to make marc less
-> intimidating to talk to, based on his profile." -- indicates you perceive Marc
-> as "intimidating". 2025-02-18: You wrote, "I think you're being too vague
-> about his responses. I need the specifics to support every claim."
+### 2. "what did I learn about Marc" — VALID
 
-| Dimension | Deterministic | Hybrid |
-|-----------|--------------|--------|
-| Grounding | 4 direct quotes | Quotes with inline interpretation |
-| Chronology | 4 dated bullets | 3 dated entries, chronological |
-| Voice | Verbatim | Quotes user's exact words |
-| Compression | 4 lines | 3 entries with annotations |
-| Narrative | List | Annotated chronology showing preparation arc |
+> 2025-02-07 (e1): "How should I open the meeting with Marc and Craig?"
+> 2025-02-12 (e3): "Give me additional suggestions to make marc less
+> intimidating to talk to, based on his profile."
+> 2025-02-18 (e4): "I think you're being too vague about his responses."
 
-### 3. "what happened with Benz" -- VALIDATED
+Properties: all pass. Chronological ordering, user voice quoted, 3 citations.
 
-**Hybrid:**
+### 3. "what happened with Benz" — VALID
+
 > 2025-07-13: "I was thinking of sending Benz a message, asking if she wants to
-> play pool. She's a lovely girl..." 2026-01-23: "I stopped at the bar to play
-> pool with Benz. She was already playing with some old English guy..."
-> Summary: You considered messaging Benz (2025-07-13) and later went to play
-> pool with her (2026-01-23). The record stops after "put the coin."
+> play pool. She's a lovely girl..."
+> 2026-01-23: "I stopped at the bar to play pool with Benz. She was already
+> playing with some old English guy." (excerpt truncated)
 
-| Dimension | Deterministic | Hybrid |
-|-----------|--------------|--------|
-| Grounding | 4 direct quotes | Quotes + summary anchored to evidence |
-| Chronology | 4 dated bullets | Dated entries with explicit timeline summary |
-| Voice | Verbatim | Quotes user's words, summarizes in second person |
-| Compression | 4 lines | Compact timeline + summary |
-| Narrative | List | Story arc with explicit gaps noted |
+Properties: all pass. 7-month timeline preserved, voice quoted.
 
-### 4. "what was my path to shadow work" -- VALIDATED
+### 4. "what was my path to shadow work" — VALID
 
-**Hybrid:**
-> Chronological excerpts: 2025-11-24 -- "We're having an argument, I felt like
-> she wasn't hearing me." 2025-12-08 -- "I believe the universe is essentially
-> pixelated..." 2025-12-10 -- "I embraced stoicism to help me understand what
-> was happening to me. That's where I learned that I could control my own mind."
-> Together: (1) interpersonal conflict, (2) philosophical questioning, (3) travel
-> and practice. The excerpts are truncated and do not fully connect.
+> 2025-11-24: "We're having an argument, I felt like she wasn't hearing me."
+> 2025-12-08: "I believe the universe is essentially pixelated."
+> 2025-12-10: "I embraced stoicism to help me understand what was happening to me."
 
-| Dimension | Deterministic | Hybrid |
-|-----------|--------------|--------|
-| Grounding | 4 direct quotes | Quotes + thematic grouping |
-| Chronology | 4 dated bullets | 3 dated entries + thematic summary |
-| Voice | Verbatim | Quotes key user phrases |
-| Compression | 4 lines | Compressed with thematic structure |
-| Narrative | List | Thematic arc with explicit incompleteness |
+Properties: all pass. 3 excerpts chronologically ordered with timestamps.
 
-### 5. "what was my thinking about the villa group" -- FALLBACK
+### 5. "what was my thinking about the villa group" — VALID
 
-The LLM output for this query non-deterministically introduces surface forms
-that fail validation (varies by run). When it passes, the hybrid produces a
-strong mixed-feelings narrative. The 80% validation rate reflects inherent
-LLM non-determinism, not a systematic validator issue.
+> 2026-01-20: "Aaron I like, even though he's fully a part of the villa..."
+> 2026-01-20: "I could just start ignoring butters..."
+> 2026-01-25: "Just the idea of being on the same list as Marc is enough to
+> make me leave."
 
-## Aggregate Assessment
+Properties: all pass. Multi-day span preserved, user voice quoted throughout.
 
-### Hybrid advantages over deterministic
+## Prompt Constraint Changes (v0.5.1 -> v0.5.2)
 
-1. **Narrative coherence** -- Hybrid weaves excerpts into stories rather than
-   listing bullets. The Benz answer shows a clear timeline arc.
-2. **Thematic organization** -- Shadow work answer groups by theme (conflict,
-   philosophy, travel) while preserving chronology.
-3. **Explicit gap acknowledgment** -- Hybrid notes when excerpts are truncated
-   or incomplete, rather than letting bullet points imply completeness.
-4. **Inline annotation** -- Marc answer annotates what each excerpt reveals
-   ("indicates you perceive Marc as intimidating") alongside the quote.
+Three targeted refinements in `_prompt_instructions_hybrid()`:
 
-### Deterministic advantages over hybrid
+1. **Entity anchoring** — "Only use names, places, and entities that appear
+   verbatim in the evidence or query. Spell them exactly as they appear."
+   (was: "Do not introduce any names, places, or entities...")
 
-1. **100% reliability** -- No API dependency, no validation failures, no
-   non-determinism.
-2. **Voice purity** -- User's exact words with zero paraphrase.
-3. **Coverage guarantee** -- All 4 evidence items always appear.
-4. **Predictability** -- Same input always produces same output.
+2. **Date anchoring** — "When evidence spans multiple dates, include the
+   created_at date for each excerpt as a chronological marker."
+   (was: "Preserve dates from the evidence. Include them in chronological order
+   when available.")
 
-### Hybrid advantages over old --llm (rewrite) path
+3. **Voice anchoring** — "Cite every evidence item you reference. Do not
+   reference evidence you do not cite." + "When evidence is truncated or
+   incomplete, say so — do not fill in the gap."
+   (new constraints, not present in v0.5.1)
 
-1. **Voice preservation** -- Hybrid quotes user phrases; rewrite paraphrased everything.
-2. **Chronological structure** -- Hybrid includes dates; rewrite dropped all dates.
-3. **Second-person address** -- Hybrid says "you wrote"; rewrite said "the speaker."
-4. **Status alignment** -- Hybrid doesn't under-claim; rewrite consistently hedged.
+## Architecture Changes
+
+- `AnswerResult.synthesis_mode` — tracks which path produced the answer:
+  `deterministic`, `llm`, `hybrid`, `llm_fallback`, `hybrid_fallback`
+- `render_answer_result()` — shows fallback notice in CLI when synthesis fails
+- `hybrid_validation.py` — shared property-based validation used by tests and eval
+- `HybridValidationResult` — structured output with per-property pass/fail and
+  classification
+- Evaluation script classifies outputs as valid/degraded/invalid/fallback
+
+## Reliability Assessment
+
+The hybrid path went from 80% (4/5) validation rate in v0.5.1 to 100% (5/5)
+in v0.5.2. The improvement came from tighter prompt constraints that anchor
+the LLM to entity names, dates, and evidence boundaries.
+
+The remaining risk is LLM non-determinism — future runs may occasionally
+produce outputs that fail validation. The fallback path is now visible in
+both CLI output and the `synthesis_mode` field, so failures are never silent.
 
 ## Recommendation
 
-**Deterministic remains the default. Hybrid is the recommended optional path.**
-
-- `--hybrid` should replace `--llm` as the recommended LLM-augmented mode.
-- `--llm` (rewrite mode) is preserved for backward compatibility but is not
-  recommended -- it erases voice and drops chronology.
-- The 80% validation rate means hybrid will fall back to deterministic ~1 in 5
-  queries due to LLM non-determinism. This is acceptable because the fallback
-  is the deterministic answer, which is always correct.
-- Do not make hybrid the default until the validation rate is consistently >95%.
-
-## Changes made
-
-1. **Entity validator redesigned** -- Split into `_entity_surface_forms_permissive()`
-   (for allowed set) and `_entity_surface_forms_strict()` (for answer check,
-   mid-sentence only). Added `_NON_ENTITY_WORDS` set and possessive normalization.
-2. **Fallback logging** -- `_apply_optional_llm_synthesis` logs WARNING on fallback.
-3. **Hybrid prompt** -- `_prompt_instructions_hybrid()` instructs voice/date/boundary
-   preservation. Evidence payload includes `author_role` in hybrid mode.
-4. **`--hybrid` CLI flag** -- Wired through `answer_query()` to `LLMSynthesisRequest.hybrid`.
-5. **6 new tests** -- Entity extraction, possessive handling, hybrid flag passthrough,
-   fallback logging.
+Hybrid synthesis is now reliable enough for optional use. The deterministic
+path remains the default. Next evaluation step: run the benchmark multiple
+times to measure the statistical validation rate across LLM non-determinism.

@@ -10,7 +10,8 @@ from rag.answering.generator_llm import (
     _entity_surface_forms_strict,
     _entity_surface_forms_permissive,
 )
-from rag.answering.models import AnswerStatus
+from rag.answering.hybrid_validation import validate_hybrid_output, HybridValidationResult
+from rag.answering.models import AnswerStatus, Citation, EvidenceItem
 
 
 # These tests lock the first grounded-answer slice against the existing retrieval contract.
@@ -623,6 +624,152 @@ class AnsweringTests(unittest.TestCase):
                 answer_query(self.run_dir, "What have I said about burnout?", limit=8, max_evidence=5, llm=True)
 
         self.assertTrue(any("falling back to deterministic" in msg for msg in log.output))
+
+    # Verify that synthesis_mode is set correctly on deterministic path.
+    def test_synthesis_mode_deterministic_by_default(self) -> None:
+        result = answer_query(self.run_dir, "What have I said about burnout?", limit=8, max_evidence=5)
+        self.assertEqual(result.synthesis_mode, "deterministic")
+
+    # Verify that synthesis_mode reflects hybrid fallback.
+    def test_synthesis_mode_reflects_hybrid_fallback(self) -> None:
+        with patch("rag.answering.answer.synthesize_answer_with_llm", side_effect=ValueError("bad")):
+            result = answer_query(self.run_dir, "What have I said about burnout?", limit=8, max_evidence=5, hybrid=True)
+        self.assertEqual(result.synthesis_mode, "hybrid_fallback")
+
+    # Verify that synthesis_mode reflects successful hybrid synthesis.
+    def test_synthesis_mode_reflects_successful_hybrid(self) -> None:
+        with patch("rag.answering.answer.synthesize_answer_with_llm") as mocked:
+            mocked.return_value = type("S", (), {"answer_text": "Hybrid answer.", "citation_ids": ("e1",)})()
+            result = answer_query(self.run_dir, "What have I said about burnout?", limit=8, max_evidence=5, hybrid=True)
+        self.assertEqual(result.synthesis_mode, "hybrid")
+
+    # Verify that CLI render shows fallback notice.
+    def test_cli_render_shows_fallback_notice(self) -> None:
+        from rag.answering.answer import render_answer_result
+        with patch("rag.answering.answer.synthesize_answer_with_llm", side_effect=ValueError("bad")):
+            result = answer_query(self.run_dir, "What have I said about burnout?", limit=8, max_evidence=5, hybrid=True)
+        rendered = render_answer_result(result)
+        self.assertIn("hybrid synthesis failed validation", rendered)
+
+    # --- Property-based validation tests for hybrid outputs ---
+
+    def _make_evidence(
+        self, excerpts_and_dates: list[tuple[str, str]], query: str = "test query",
+    ) -> tuple[EvidenceItem, ...]:
+        items: list[EvidenceItem] = []
+        for i, (excerpt, created_at) in enumerate(excerpts_and_dates):
+            citation = Citation(
+                provider="chatgpt", conversation_id=f"conv-{i}",
+                title=f"Test Conversation {i}", message_id=f"msg-{i}",
+                created_at=created_at, excerpt=excerpt,
+            )
+            items.append(EvidenceItem(
+                rank=i + 1, source_result_rank=i + 1, window_id=f"w-{i}",
+                score=1.0, retrieval_mode="bm25", author_role="user",
+                matched_terms=(), citation=citation,
+            ))
+        return tuple(items)
+
+    # Property: no new entities when answer only uses evidence terms.
+    def test_hybrid_property_no_new_entities_passes_clean_answer(self) -> None:
+        evidence = self._make_evidence([
+            ("Marc said he would come to the meeting with Craig.", "2025-02-07T08:00:00Z"),
+        ])
+        result = validate_hybrid_output(
+            answer_text='You mentioned that Marc would "come to the meeting with Craig."',
+            citation_ids=("e1",), query="what about Marc", evidence_items=evidence,
+            answer_status=AnswerStatus.SUPPORTED,
+        )
+        self.assertTrue(result.no_new_entities)
+
+    # Property: new entities are caught.
+    def test_hybrid_property_catches_new_entities(self) -> None:
+        evidence = self._make_evidence([
+            ("Marc said he would come to the meeting.", "2025-02-07T08:00:00Z"),
+        ])
+        result = validate_hybrid_output(
+            answer_text='Marc met with Alice at the restaurant.',
+            citation_ids=("e1",), query="what about Marc", evidence_items=evidence,
+            answer_status=AnswerStatus.SUPPORTED,
+        )
+        self.assertFalse(result.no_new_entities)
+        self.assertEqual(result.classification, "invalid")
+
+    # Property: dates preserved when evidence spans multiple days.
+    def test_hybrid_property_dates_preserved(self) -> None:
+        evidence = self._make_evidence([
+            ("First event happened here.", "2025-01-10T08:00:00Z"),
+            ("Second event happened later.", "2025-03-15T08:00:00Z"),
+        ])
+        result = validate_hybrid_output(
+            answer_text='On 2025-01-10 the first event happened. Later on 2025-03-15 the second event.',
+            citation_ids=("e1", "e2"), query="what happened", evidence_items=evidence,
+            answer_status=AnswerStatus.SUPPORTED,
+        )
+        self.assertTrue(result.dates_preserved)
+
+    # Property: missing dates flagged when evidence spans multiple days.
+    def test_hybrid_property_catches_missing_dates(self) -> None:
+        evidence = self._make_evidence([
+            ("First event happened here.", "2025-01-10T08:00:00Z"),
+            ("Second event happened later.", "2025-03-15T08:00:00Z"),
+        ])
+        result = validate_hybrid_output(
+            answer_text='First the event happened, then another event happened later.',
+            citation_ids=("e1", "e2"), query="what happened", evidence_items=evidence,
+            answer_status=AnswerStatus.SUPPORTED,
+        )
+        self.assertFalse(result.dates_preserved)
+
+    # Property: citation overflow caught.
+    def test_hybrid_property_catches_citation_overflow(self) -> None:
+        evidence = self._make_evidence([
+            ("Only one excerpt.", "2025-01-10T08:00:00Z"),
+        ])
+        result = validate_hybrid_output(
+            answer_text='Answer referencing multiple things.',
+            citation_ids=("e1", "e2", "e3"), query="test", evidence_items=evidence,
+            answer_status=AnswerStatus.SUPPORTED,
+        )
+        self.assertFalse(result.evidence_bounded)
+        self.assertEqual(result.classification, "invalid")
+
+    # Property: status inflation caught.
+    def test_hybrid_property_catches_status_inflation(self) -> None:
+        evidence = self._make_evidence([
+            ("Some partial evidence.", "2025-01-10T08:00:00Z"),
+        ])
+        result = validate_hybrid_output(
+            answer_text='The evidence clearly shows the full picture.',
+            citation_ids=("e1",), query="test", evidence_items=evidence,
+            answer_status=AnswerStatus.PARTIALLY_SUPPORTED,
+        )
+        self.assertFalse(result.status_not_inflated)
+
+    # Property: evidence grounding detected via n-gram overlap.
+    def test_hybrid_property_evidence_grounding(self) -> None:
+        evidence = self._make_evidence([
+            ("I was thinking of sending Benz a message.", "2025-07-13T08:00:00Z"),
+        ])
+        result = validate_hybrid_output(
+            answer_text='You said "thinking of sending Benz a message."',
+            citation_ids=("e1",), query="what about Benz", evidence_items=evidence,
+            answer_status=AnswerStatus.SUPPORTED,
+        )
+        self.assertTrue(result.has_evidence_grounding)
+
+    # Property: answer with no evidence grounding is flagged as degraded.
+    def test_hybrid_property_catches_no_grounding(self) -> None:
+        evidence = self._make_evidence([
+            ("I was thinking of sending Benz a message.", "2025-07-13T08:00:00Z"),
+        ])
+        result = validate_hybrid_output(
+            answer_text='You had some feelings about a person.',
+            citation_ids=("e1",), query="what about Benz", evidence_items=evidence,
+            answer_status=AnswerStatus.SUPPORTED,
+        )
+        self.assertFalse(result.has_evidence_grounding)
+        self.assertEqual(result.classification, "degraded")
 
 
 if __name__ == "__main__":

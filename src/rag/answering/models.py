@@ -139,6 +139,7 @@ class AnswerResult:
     citations: tuple[Citation, ...]
     retrieval_summary: RetrievalSummary
     diagnostics: AnswerDiagnostics
+    synthesis_mode: str = "deterministic"
 
     # Convert the full answer result into a stable JSON-friendly payload.
     def to_dict(self) -> dict[str, object]:
@@ -147,6 +148,7 @@ class AnswerResult:
             "query": self.query,
             "answer_status": self.answer_status.value,
             "answer": self.answer,
+            "synthesis_mode": self.synthesis_mode,
             "evidence_used": [item.to_dict() for item in self.evidence_used],
             "gaps": list(self.gaps),
             "conflicts": list(self.conflicts),
