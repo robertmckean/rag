@@ -192,3 +192,180 @@ def extract_positions(
             ))
 
     return tuple(positions)
+
+
+# ---------------------------------------------------------------------------
+# Phase 13B — Temporal comparison
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ThinkingEvolution:
+    """Temporal comparison of user-authored positions for one entity/topic."""
+
+    entity: str                       # target entity or topic
+    positions: tuple[Position, ...]   # chronologically ordered
+    shifts: tuple[str, ...]           # shift signals between adjacent positions
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "entity": self.entity,
+            "positions": [p.to_dict() for p in self.positions],
+            "shifts": list(self.shifts),
+        }
+
+
+# Negation terms that signal a reversed stance.
+_NEGATION_TERMS = frozenset({
+    "don't", "dont", "not", "no longer", "never", "wrong", "changed my mind",
+})
+
+# Positive stance terms.
+_POSITIVE_STANCE = frozenset({
+    "trust", "love", "enjoy", "sure", "confident", "believe", "great",
+    "good", "better", "understand", "appreciate", "comfortable", "happy",
+})
+
+# Negative stance terms.
+_NEGATIVE_STANCE = frozenset({
+    "distrust", "hate", "dislike", "doubt", "uncertain", "wrong",
+    "bad", "worse", "frustrated", "angry", "uncomfortable", "worried",
+    "draining", "exhausted", "disappointed",
+})
+
+# Explicit self-revision markers (subset of stance markers).
+_SELF_REVISION_MARKERS = frozenset({
+    "i changed my mind", "i was wrong about", "i no longer", "i used to think",
+})
+
+
+def _position_tokens(text: str) -> set[str]:
+    """Lowercase tokens from position text for comparison."""
+    normalized = _normalize_apostrophes(text.lower())
+    return set(re.findall(r"[a-z']+", normalized))
+
+
+def _has_negation(tokens: set[str]) -> bool:
+    """Check whether any negation term appears in the token set."""
+    for neg in _NEGATION_TERMS:
+        neg_parts = neg.split()
+        if len(neg_parts) == 1:
+            if neg in tokens:
+                return True
+        else:
+            # Multi-word: check if all parts present (rough heuristic).
+            if all(p in tokens for p in neg_parts):
+                return True
+    return False
+
+
+def _stance_valence(tokens: set[str]) -> int:
+    """Return +1 for positive, -1 for negative, 0 for neutral."""
+    pos = len(tokens & _POSITIVE_STANCE)
+    neg = len(tokens & _NEGATIVE_STANCE)
+    if pos > neg:
+        return 1
+    if neg > pos:
+        return -1
+    return 0
+
+
+def _detect_shift(earlier: Position, later: Position) -> str | None:
+    """Detect a possible shift between two adjacent positions.
+
+    Returns a conservative description string, or None if no shift detected.
+    """
+    # Check for explicit self-revision marker in the later position.
+    if later.stance_marker in _SELF_REVISION_MARKERS:
+        return f"explicit self-revision detected: \"{later.stance_marker}\""
+
+    earlier_tokens = _position_tokens(earlier.text)
+    later_tokens = _position_tokens(later.text)
+
+    # Negation change.
+    earlier_neg = _has_negation(earlier_tokens)
+    later_neg = _has_negation(later_tokens)
+    if earlier_neg != later_neg:
+        if later_neg:
+            return "possible shift: negation introduced in later position"
+        else:
+            return "possible shift: negation removed in later position"
+
+    # Sentiment-bearing term change.
+    earlier_valence = _stance_valence(earlier_tokens)
+    later_valence = _stance_valence(later_tokens)
+    if earlier_valence != 0 and later_valence != 0 and earlier_valence != later_valence:
+        direction = (
+            "positive to negative" if earlier_valence > 0 else "negative to positive"
+        )
+        return f"possible shift from {direction} stance"
+
+    return None
+
+
+def _sort_key(pos: Position) -> tuple[int, str, str]:
+    """Sort positions: dated first (ascending), undated last, then by text."""
+    if pos.date is None:
+        return (1, "", pos.text)
+    # Use first 10 chars of date (YYYY-MM-DD) for sorting.
+    return (0, pos.date[:10], pos.text)
+
+
+def build_thinking_evolution(
+    entity: str,
+    positions: tuple[Position, ...],
+) -> ThinkingEvolution:
+    """Build a temporal comparison for one entity/topic.
+
+    Parameters
+    ----------
+    entity : str
+        The entity or topic being compared.
+    positions : tuple[Position, ...]
+        All extracted positions relevant to this entity.
+
+    Returns
+    -------
+    ThinkingEvolution
+        Chronologically ordered positions with detected shifts.
+    """
+    sorted_positions = tuple(sorted(positions, key=_sort_key))
+
+    shifts: list[str] = []
+    for i in range(len(sorted_positions) - 1):
+        shift = _detect_shift(sorted_positions[i], sorted_positions[i + 1])
+        if shift:
+            shifts.append(
+                f"Between \"{sorted_positions[i].date or 'undated'}\" and "
+                f"\"{sorted_positions[i + 1].date or 'undated'}\": {shift}"
+            )
+
+    return ThinkingEvolution(
+        entity=entity,
+        positions=sorted_positions,
+        shifts=tuple(shifts),
+    )
+
+
+def collect_positions_for_entity(
+    all_positions: tuple[Position, ...],
+    entity: str,
+) -> tuple[Position, ...]:
+    """Filter positions to those matching a target entity (case-insensitive).
+
+    Falls back to all positions if no entity-specific matches exist.
+    """
+    entity_lower = entity.lower()
+    entity_specific = tuple(
+        p for p in all_positions
+        if p.entity is not None and p.entity.lower() == entity_lower
+    )
+    if entity_specific:
+        return entity_specific
+
+    # Fallback: positions whose text mentions the entity as a whole word.
+    pattern = re.compile(r"\b" + re.escape(entity) + r"\b", re.IGNORECASE)
+    text_matches = tuple(
+        p for p in all_positions
+        if pattern.search(p.text)
+    )
+    return text_matches

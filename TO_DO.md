@@ -29,7 +29,8 @@ What works:
 - [x] Role-aware phase descriptions and label entity selection (Phase 12A)
 - [x] Role-aware narrative summary with user-grounding count (Phase 12B)
 - [x] Deterministic user-position extraction via stance markers (Phase 13A)
-- [x] 441 tests passing
+- [x] Temporal position comparison with shift detection heuristics (Phase 13B)
+- [x] 462 tests passing
 
 What does not work:
 
@@ -147,14 +148,14 @@ Prerequisite: Phase 10 (entity-scoped queries to focus on a topic).
 
 ### 13B: Temporal comparison
 
-- [ ] For a given entity/topic, collect positions across all phases sorted by date
-- [ ] Detect shifts: when the same entity has positions with different
+- [x] For a given entity/topic, collect positions across all phases sorted by date
+- [x] Detect shifts: when the same entity has positions with different
       sentiment-bearing terms or negation of prior terms across time periods
-- [ ] Build `ThinkingEvolution(entity: str, positions: tuple[Position, ...],
+- [x] Build `ThinkingEvolution(entity: str, positions: tuple[Position, ...],
       shifts: tuple[str, ...])` frozen dataclass
-- [ ] Add test: stable positions across time show no shifts
-- [ ] Add test: contradictory positions across time show a shift
-- [ ] Add test: positions without dates handled gracefully (sorted last)
+- [x] Add test: stable positions across time show no shifts
+- [x] Add test: contradictory positions across time show a shift
+- [x] Add test: positions without dates handled gracefully (sorted last)
 
 ### 13C: Router integration
 
