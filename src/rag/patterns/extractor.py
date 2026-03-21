@@ -17,9 +17,11 @@ from rag.narrative.builder import content_terms_from_text, entity_terms_from_tex
 from rag.narrative.models import NarrativePhase, NarrativeReconstruction
 from rag.patterns.aliases import ENTITY_ALIASES, canonicalize_entity
 from rag.patterns.models import (
+    EntityClusterLink,
     EntityOccurrence,
     PatternReport,
     RecurringEntity,
+    TemporalBurst,
     TopicCluster,
 )
 
@@ -109,7 +111,7 @@ def extract_recurring_entities(
     PatternReport with only recurring entities (2+ phase appearances).
     """
     if not narratives:
-        return PatternReport(query="", entities=(), clusters=(), evidence_count=0)
+        return PatternReport(query="", entities=(), clusters=(), entity_cluster_links=(), temporal_bursts=(), evidence_count=0)
 
     # Track entity -> list of (phase, narrative_index) to deduplicate same phase.
     entity_phases: dict[str, list[tuple[NarrativePhase, int]]] = defaultdict(list)
@@ -178,10 +180,15 @@ def extract_recurring_entities(
 
     clusters = _extract_topic_clusters(all_phases, query_term_set)
 
+    entity_cluster_links = _extract_entity_cluster_links(tuple(recurring), tuple(clusters))
+    temporal_bursts = _extract_temporal_bursts(all_phases)
+
     return PatternReport(
         query=query,
         entities=tuple(recurring),
         clusters=tuple(clusters),
+        entity_cluster_links=tuple(entity_cluster_links),
+        temporal_bursts=tuple(temporal_bursts),
         evidence_count=total_evidence,
     )
 
@@ -330,3 +337,105 @@ def _extract_topic_clusters(
     # Deterministic ordering: by phase_count desc, then label asc.
     result.sort(key=lambda c: (-c.phase_count, c.label))
     return result
+
+
+# ---------------------------------------------------------------------------
+# Cross-cluster entity links
+# ---------------------------------------------------------------------------
+
+
+def _extract_entity_cluster_links(
+    entities: tuple[RecurringEntity, ...],
+    clusters: tuple[TopicCluster, ...],
+) -> list[EntityClusterLink]:
+    """Identify entities that appear in 2+ topic clusters."""
+    if len(clusters) < 2:
+        return []
+
+    entity_to_clusters: dict[str, list[TopicCluster]] = defaultdict(list)
+    for cluster in clusters:
+        for ent in cluster.key_entities:
+            entity_to_clusters[ent].append(cluster)
+
+    links: list[EntityClusterLink] = []
+    for ent_name, ent_clusters in entity_to_clusters.items():
+        if len(ent_clusters) < 2:
+            continue
+        total_phases = sum(c.phase_count for c in ent_clusters)
+        links.append(EntityClusterLink(
+            entity=ent_name,
+            cluster_labels=tuple(c.label for c in ent_clusters),
+            cluster_count=len(ent_clusters),
+            total_phase_count=total_phases,
+        ))
+
+    # Deterministic ordering: by cluster_count desc, then entity name asc.
+    links.sort(key=lambda l: (-l.cluster_count, l.entity))
+    return links
+
+
+# ---------------------------------------------------------------------------
+# Temporal burst detection
+# ---------------------------------------------------------------------------
+
+_BURST_WINDOW_DAYS = 7
+_BURST_MIN_PHASES = 3
+
+
+def _approx_days(date_a: str, date_b: str) -> int:
+    """Approximate day distance between two YYYY-MM-DD strings."""
+    try:
+        ya, ma, da = int(date_a[:4]), int(date_a[5:7]), int(date_a[8:10])
+        yb, mb, db = int(date_b[:4]), int(date_b[5:7]), int(date_b[8:10])
+        jd_a = ya * 365 + ma * 30 + da
+        jd_b = yb * 365 + mb * 30 + db
+        return abs(jd_b - jd_a)
+    except (ValueError, IndexError):
+        return 999
+
+
+def _extract_temporal_bursts(
+    phases: list[NarrativePhase],
+) -> list[TemporalBurst]:
+    """Identify periods with 3+ phases within a 7-day window."""
+    # Collect phases with usable dates.
+    dated: list[tuple[str, NarrativePhase]] = []
+    for phase in phases:
+        date = _first_date_from_range(phase.date_range)
+        if date:
+            dated.append((date, phase))
+
+    if len(dated) < _BURST_MIN_PHASES:
+        return []
+
+    dated.sort(key=lambda x: x[0])
+
+    bursts: list[TemporalBurst] = []
+    i = 0
+    while i < len(dated):
+        # Expand window from position i.
+        j = i + 1
+        while j < len(dated) and _approx_days(dated[i][0], dated[j][0]) <= _BURST_WINDOW_DAYS:
+            j += 1
+        window = dated[i:j]
+        if len(window) >= _BURST_MIN_PHASES:
+            phase_labels = tuple(p.label for _, p in window)
+            entities: set[str] = set()
+            for _, p in window:
+                for ent in entity_terms_from_text(p.description):
+                    entities.add(canonicalize_entity(ent))
+            date_range = window[0][0] if window[0][0] == window[-1][0] else f"{window[0][0]} to {window[-1][0]}"
+            bursts.append(TemporalBurst(
+                date_range=date_range,
+                phase_labels=phase_labels,
+                entities=tuple(sorted(entities)),
+                burst_size=len(window),
+            ))
+            # Skip past this burst to avoid overlapping bursts.
+            i = j
+        else:
+            i += 1
+
+    # Deterministic ordering: by burst_size desc, then date_range asc.
+    bursts.sort(key=lambda b: (-b.burst_size, b.date_range))
+    return bursts

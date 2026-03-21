@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from rag.patterns.models import EntityOccurrence, PatternReport, RecurringEntity, TopicCluster
+from rag.patterns.models import EntityClusterLink, EntityOccurrence, PatternReport, RecurringEntity, TemporalBurst, TopicCluster
 from rag.patterns.renderer import render_json, render_text
 
 
@@ -33,12 +33,14 @@ def _make_report() -> PatternReport:
             ),
         ),
         clusters=(),
+        entity_cluster_links=(),
+        temporal_bursts=(),
         evidence_count=5,
     )
 
 
 def _make_empty_report() -> PatternReport:
-    return PatternReport(query="nothing", entities=(), clusters=(), evidence_count=0)
+    return PatternReport(query="nothing", entities=(), clusters=(), entity_cluster_links=(), temporal_bursts=(), evidence_count=0)
 
 
 class JsonRenderTests(unittest.TestCase):
@@ -160,6 +162,8 @@ def _make_cluster_report() -> PatternReport:
         query="What about Marc?",
         entities=(),
         clusters=(cluster,),
+        entity_cluster_links=(),
+        temporal_bursts=(),
         evidence_count=3,
     )
 
@@ -199,6 +203,129 @@ class ClusterRenderTests(unittest.TestCase):
         output = render_json(_make_report())
         d = json.loads(output)
         self.assertEqual(d["clusters"], [])
+
+
+def _make_full_report() -> PatternReport:
+    """Report with entities, clusters, links, and bursts."""
+    cluster_1 = TopicCluster(
+        label="Marc, Craig: villa, drama",
+        phase_labels=("2025-01-01: Marc, Craig", "2025-01-05: Craig, Marc"),
+        evidence_ids=("e1", "e2"),
+        date_range="2025-01-01 to 2025-01-05",
+        key_entities=("Marc", "Craig"),
+        key_terms=("villa", "drama"),
+        phase_count=2,
+    )
+    cluster_2 = TopicCluster(
+        label="Marc: home, really",
+        phase_labels=("2025-02-01: Marc",),
+        evidence_ids=("e3",),
+        date_range="2025-02-01",
+        key_entities=("Marc",),
+        key_terms=("home", "really"),
+        phase_count=1,
+    )
+    link = EntityClusterLink(
+        entity="Marc",
+        cluster_labels=("Marc, Craig: villa, drama", "Marc: home, really"),
+        cluster_count=2,
+        total_phase_count=3,
+    )
+    burst = TemporalBurst(
+        date_range="2025-01-01 to 2025-01-05",
+        phase_labels=("P1: Marc", "P2: Craig", "P3: Marc"),
+        entities=("Craig", "Marc"),
+        burst_size=3,
+    )
+    return PatternReport(
+        query="What about Marc?",
+        entities=(
+            RecurringEntity(
+                name="Marc",
+                occurrences=(EntityOccurrence("e1", "2025-01-01", "Marc snippet"),),
+                occurrence_count=1,
+            ),
+        ),
+        clusters=(cluster_1, cluster_2),
+        entity_cluster_links=(link,),
+        temporal_bursts=(burst,),
+        evidence_count=5,
+    )
+
+
+class CrossClusterRenderTests(unittest.TestCase):
+    """Tests for cross-cluster entity link rendering."""
+
+    def test_text_links_section_present(self) -> None:
+        output = render_text(_make_full_report())
+        self.assertIn("Cross-cluster entities: 1", output)
+        self.assertIn("Marc (2 clusters, 3 phases)", output)
+
+    def test_text_link_cluster_labels_listed(self) -> None:
+        output = render_text(_make_full_report())
+        self.assertIn("- Marc, Craig: villa, drama", output)
+        self.assertIn("- Marc: home, really", output)
+
+    def test_json_links_present(self) -> None:
+        output = render_json(_make_full_report())
+        d = json.loads(output)
+        self.assertEqual(len(d["entity_cluster_links"]), 1)
+        self.assertEqual(d["entity_cluster_links"][0]["entity"], "Marc")
+        self.assertEqual(d["entity_cluster_links"][0]["cluster_count"], 2)
+
+    def test_text_no_links_section_when_empty(self) -> None:
+        output = render_text(_make_report())
+        self.assertNotIn("Cross-cluster entities:", output)
+
+
+class TemporalBurstRenderTests(unittest.TestCase):
+    """Tests for temporal burst rendering."""
+
+    def test_text_bursts_section_present(self) -> None:
+        output = render_text(_make_full_report())
+        self.assertIn("Temporal bursts: 1", output)
+        self.assertIn("2025-01-01 to 2025-01-05 -- 3 phases", output)
+
+    def test_text_burst_entities_listed(self) -> None:
+        output = render_text(_make_full_report())
+        self.assertIn("Entities: Craig, Marc", output)
+
+    def test_text_burst_phases_listed(self) -> None:
+        output = render_text(_make_full_report())
+        self.assertIn("- P1: Marc", output)
+        self.assertIn("- P2: Craig", output)
+
+    def test_json_bursts_present(self) -> None:
+        output = render_json(_make_full_report())
+        d = json.loads(output)
+        self.assertEqual(len(d["temporal_bursts"]), 1)
+        self.assertEqual(d["temporal_bursts"][0]["burst_size"], 3)
+
+    def test_text_no_bursts_section_when_empty(self) -> None:
+        output = render_text(_make_report())
+        self.assertNotIn("Temporal bursts:", output)
+
+
+class SummaryRenderTests(unittest.TestCase):
+    """Tests for the summary emphasis section."""
+
+    def test_summary_section_present(self) -> None:
+        output = render_text(_make_full_report())
+        self.assertIn("Summary", output)
+        self.assertIn("Top entities:", output)
+        self.assertIn("Top themes:", output)
+
+    def test_summary_cross_topic_present(self) -> None:
+        output = render_text(_make_full_report())
+        self.assertIn("Cross-topic: Marc", output)
+
+    def test_summary_bursts_present(self) -> None:
+        output = render_text(_make_full_report())
+        self.assertIn("Activity bursts:", output)
+
+    def test_no_summary_when_empty(self) -> None:
+        output = render_text(_make_empty_report())
+        self.assertNotIn("Summary", output)
 
 
 if __name__ == "__main__":

@@ -156,12 +156,6 @@ def _excerpt_terms(item: EvidenceItem) -> set[str]:
     return content_terms_from_text(item.citation.excerpt)
 
 
-_LABEL_NOISE_WORDS = frozenset({
-    "Yes", "Bel", "Maybe", "Partially", "Really", "Actually", "Honestly",
-    "Okay", "Sure", "Right", "Well", "Anyway", "Plus", "Basically",
-})
-
-
 def entity_terms_from_text(text: str) -> set[str]:
     """Extract capitalized proper-noun candidates from arbitrary text.
 
@@ -170,7 +164,7 @@ def entity_terms_from_text(text: str) -> set[str]:
     return {
         m.group(0)
         for m in re.finditer(r"\b[A-Z][a-z]{2,}\b", text)
-        if m.group(0) not in _NON_ENTITY_WORDS and m.group(0) not in _LABEL_NOISE_WORDS
+        if m.group(0) not in _NON_ENTITY_WORDS
     }
 
 

@@ -15,6 +15,7 @@ from rag.narrative.builder import (
 )
 from rag.patterns.extractor import extract_recurring_entities
 from rag.patterns.renderer import render_json, render_text
+from rag.patterns.router import route_answer
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,6 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="json",
         help="Output format.",
     )
+    parser.add_argument(
+        "--answer",
+        type=str,
+        default=None,
+        help="Route a question to the appropriate data and produce a concise answer.",
+    )
     return parser
 
 
@@ -81,6 +88,10 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     report = extract_recurring_entities(narratives)
+
+    if args.answer:
+        safe_print(route_answer(args.answer, report, narratives))
+        return 0
 
     if args.format == "json":
         safe_print(render_json(report))

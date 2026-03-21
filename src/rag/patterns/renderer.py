@@ -46,5 +46,48 @@ def render_text(report: PatternReport) -> str:
             lines.append(f"      Evidence: {', '.join(cluster.evidence_ids)}")
             lines.append("")
 
+    if report.entity_cluster_links:
+        lines.append(f"Cross-cluster entities: {len(report.entity_cluster_links)}")
+        lines.append("")
+
+        for link in report.entity_cluster_links:
+            lines.append(f"  {link.entity} ({link.cluster_count} clusters, {link.total_phase_count} phases)")
+            for cl in link.cluster_labels:
+                lines.append(f"      - {cl}")
+            lines.append("")
+
+    if report.temporal_bursts:
+        lines.append(f"Temporal bursts: {len(report.temporal_bursts)}")
+        lines.append("")
+
+        for burst in report.temporal_bursts:
+            lines.append(f"  {burst.date_range} -- {burst.burst_size} phases")
+            if burst.entities:
+                lines.append(f"      Entities: {', '.join(burst.entities)}")
+            for pl in burst.phase_labels:
+                lines.append(f"      - {pl}")
+            lines.append("")
+
+    # Summary emphasis: top entities and clusters.
+    if report.entities or report.clusters:
+        lines.append("---")
+        lines.append("Summary")
+        lines.append("")
+        if report.entities:
+            top = report.entities[:3]
+            names = ", ".join(f"{e.name} ({e.occurrence_count})" for e in top)
+            lines.append(f"  Top entities: {names}")
+        if report.clusters:
+            top = report.clusters[:3]
+            labels = ", ".join(f"{c.label} ({c.phase_count} phases)" for c in top)
+            lines.append(f"  Top themes: {labels}")
+        if report.entity_cluster_links:
+            bridging = ", ".join(l.entity for l in report.entity_cluster_links[:3])
+            lines.append(f"  Cross-topic: {bridging}")
+        if report.temporal_bursts:
+            burst_summary = ", ".join(f"{b.date_range} ({b.burst_size} phases)" for b in report.temporal_bursts[:3])
+            lines.append(f"  Activity bursts: {burst_summary}")
+        lines.append("")
+
     lines.append(f"Evidence count: {report.evidence_count}")
     return "\n".join(lines)

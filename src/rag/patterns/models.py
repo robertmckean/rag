@@ -1,6 +1,7 @@
-"""Schema definitions for pattern extraction: recurring entities and topic clusters.
+"""Schema definitions for pattern extraction.
 
-Every field is frozen and serializable.  Trajectory detection is deferred.
+Recurring entities, topic clusters, cross-cluster entity links, and temporal
+bursts.  Every field is frozen and serializable.
 """
 
 from __future__ import annotations
@@ -61,12 +62,50 @@ class TopicCluster:
 
 
 @dataclass(frozen=True)
+class EntityClusterLink:
+    """An entity that appears across multiple topic clusters."""
+
+    entity: str
+    cluster_labels: tuple[str, ...]
+    cluster_count: int
+    total_phase_count: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "entity": self.entity,
+            "cluster_labels": list(self.cluster_labels),
+            "cluster_count": self.cluster_count,
+            "total_phase_count": self.total_phase_count,
+        }
+
+
+@dataclass(frozen=True)
+class TemporalBurst:
+    """A period with unusually dense phase activity."""
+
+    date_range: str
+    phase_labels: tuple[str, ...]
+    entities: tuple[str, ...]
+    burst_size: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "date_range": self.date_range,
+            "phase_labels": list(self.phase_labels),
+            "entities": list(self.entities),
+            "burst_size": self.burst_size,
+        }
+
+
+@dataclass(frozen=True)
 class PatternReport:
     """Complete pattern extraction report for one query set."""
 
     query: str
     entities: tuple[RecurringEntity, ...]
     clusters: tuple[TopicCluster, ...]
+    entity_cluster_links: tuple[EntityClusterLink, ...]
+    temporal_bursts: tuple[TemporalBurst, ...]
     evidence_count: int
 
     def to_dict(self) -> dict[str, object]:
@@ -74,5 +113,7 @@ class PatternReport:
             "query": self.query,
             "entities": [e.to_dict() for e in self.entities],
             "clusters": [c.to_dict() for c in self.clusters],
+            "entity_cluster_links": [l.to_dict() for l in self.entity_cluster_links],
+            "temporal_bursts": [b.to_dict() for b in self.temporal_bursts],
             "evidence_count": self.evidence_count,
         }

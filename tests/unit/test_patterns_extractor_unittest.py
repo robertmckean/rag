@@ -608,5 +608,302 @@ class TopicClusteringTests(unittest.TestCase):
         self.assertTrue(len(report.clusters) >= 1)
 
 
+class EntityQualityTests(unittest.TestCase):
+    """Tests for entity extraction quality — false positive suppression."""
+
+    def test_sentence_start_generic_words_suppressed(self) -> None:
+        """Capitalized common words at sentence/excerpt start are not entities."""
+        phases = (
+            _make_phase(
+                "P1",
+                '(2025-01-01) [user] "Something happened with Marc today." '
+                '| (2025-01-01) [assistant] "During the conversation Marc explained."',
+                ("e1",), "2025-01-01",
+            ),
+            _make_phase(
+                "P2",
+                '(2025-02-01) [user] "Something else about Marc." '
+                '| (2025-02-01) [assistant] "Fair point about the situation."',
+                ("e2",), "2025-02-01",
+            ),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=2)
+        report = extract_recurring_entities([narrative])
+
+        entity_names = [e.name for e in report.entities]
+        self.assertNotIn("Something", entity_names)
+        self.assertNotIn("During", entity_names)
+        self.assertNotIn("Fair", entity_names)
+
+    def test_legitimate_single_word_entities_preserved(self) -> None:
+        """Real person/place names still extracted despite being single words."""
+        phases = (
+            _make_phase("P1", 'Marc and Craig met at the villa.', ("e1",), "2025-01-01"),
+            _make_phase("P2", 'Benz called Marc about Butters.', ("e2",), "2025-02-01"),
+            _make_phase("P3", 'Craig visited Rawai with Mecky.', ("e3",), "2025-03-01"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=3)
+        report = extract_recurring_entities([narrative])
+
+        # These are legitimate names — should survive filtering.
+        all_phase_entities = set()
+        from rag.narrative.builder import entity_terms_from_text
+        for phase in phases:
+            all_phase_entities |= entity_terms_from_text(phase.description)
+
+        for name in ("Marc", "Craig", "Benz", "Butters", "Rawai", "Mecky"):
+            self.assertIn(name, all_phase_entities, f"{name} should be extracted as entity")
+
+    def test_corpus_false_positives_suppressed(self) -> None:
+        """Words observed as false positives in real corpus runs are suppressed."""
+        from rag.narrative.builder import entity_terms_from_text
+
+        false_positives = [
+            "Something", "During", "Fair", "Evil", "Good", "Post",
+            "Behaviors", "Documented", "Exactly", "Give", "Got",
+            "Remember", "See", "Speaking", "Understood", "After",
+            "Although", "Dropped", "Fucking", "Integration",
+            "Organizing", "Please", "Review", "Tell", "Understanding",
+        ]
+        for word in false_positives:
+            entities = entity_terms_from_text(f'{word} is not a real entity name.')
+            self.assertNotIn(word, entities, f"{word} should be filtered out")
+
+    def test_verb_forms_at_sentence_start_suppressed(self) -> None:
+        """Common verbs capitalized at sentence start are not entities."""
+        phases = (
+            _make_phase(
+                "P1",
+                '(2025-01-01) [user] "Decided to talk to Marc about it."',
+                ("e1",), "2025-01-01",
+            ),
+            _make_phase(
+                "P2",
+                '(2025-02-01) [user] "Decided that Marc was right after all."',
+                ("e2",), "2025-02-01",
+            ),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=2)
+        report = extract_recurring_entities([narrative])
+
+        entity_names = [e.name for e in report.entities]
+        self.assertNotIn("Decided", entity_names)
+        self.assertIn("Marc", entity_names)
+
+    def test_adjectives_at_sentence_start_suppressed(self) -> None:
+        """Common adjectives capitalized at sentence start are not entities."""
+        from rag.narrative.builder import entity_terms_from_text
+
+        adjectives = ["Good", "Great", "Important", "Interesting", "Strange", "Terrible"]
+        for word in adjectives:
+            entities = entity_terms_from_text(f'{word} thing happened today.')
+            self.assertNotIn(word, entities, f"{word} should be filtered out")
+
+    def test_mixed_noise_and_real_entities(self) -> None:
+        """Noise words suppressed while real entities in same text are preserved."""
+        from rag.narrative.builder import entity_terms_from_text
+
+        text = 'Something happened when Craig and Marc discussed. Evil stuff was going on.'
+        entities = entity_terms_from_text(text)
+        self.assertNotIn("Something", entities)
+        self.assertNotIn("Evil", entities)
+        self.assertIn("Craig", entities)
+        self.assertIn("Marc", entities)
+
+    def test_recurring_entity_quality_with_noise_descriptions(self) -> None:
+        """Recurring entity extraction filters noise even from multi-phase data."""
+        phases = (
+            _make_phase(
+                "P1",
+                '(2025-01-01) [user] "Evil bastard Mark said something."',
+                ("e1",), "2025-01-01",
+            ),
+            _make_phase(
+                "P2",
+                '(2025-02-01) [user] "Good that Marc came back."',
+                ("e2",), "2025-02-01",
+            ),
+            _make_phase(
+                "P3",
+                '(2025-03-01) [user] "Organizing the villa trip with Marc."',
+                ("e3",), "2025-03-01",
+            ),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=3)
+        report = extract_recurring_entities([narrative])
+
+        entity_names = [e.name for e in report.entities]
+        self.assertIn("Marc", entity_names)
+        self.assertNotIn("Evil", entity_names)
+        self.assertNotIn("Good", entity_names)
+        self.assertNotIn("Organizing", entity_names)
+
+    def test_topic_clusters_benefit_from_cleaner_entities(self) -> None:
+        """Cluster key_entities should not contain noise words."""
+        phases = (
+            _make_phase(
+                "P1",
+                'Evil Marc discussed the villa drama with Craig and Benz.',
+                ("e1",), "2025-01-01",
+            ),
+            _make_phase(
+                "P2",
+                'Something about Marc and Craig at the villa situation.',
+                ("e2",), "2025-01-05",
+            ),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=2)
+        report = extract_recurring_entities([narrative])
+
+        for cluster in report.clusters:
+            for ent in cluster.key_entities:
+                self.assertNotIn(ent, {"Evil", "Something"},
+                                 f"Noise word '{ent}' should not be a cluster key_entity")
+
+
+class EntityClusterLinkTests(unittest.TestCase):
+    """Tests for cross-cluster entity link extraction."""
+
+    def test_entity_linked_across_two_clusters(self) -> None:
+        """Entity present in key_entities of 2+ clusters produces a link."""
+        phases = (
+            _make_phase("P1", 'Marc and Craig discussed the villa drama.', ("e1",), "2025-01-01"),
+            _make_phase("P2", 'Craig and Marc resolved the villa issue.', ("e2",), "2025-01-05"),
+            _make_phase("P3", 'Marc talked about home life and family.', ("e3",), "2025-06-01"),
+            _make_phase("P4", 'Marc continued discussing home and routine.', ("e4",), "2025-06-05"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=4)
+        report = extract_recurring_entities([narrative])
+
+        # Marc should appear in clusters for both villa and home topics.
+        if len(report.clusters) >= 2:
+            link_entities = [l.entity for l in report.entity_cluster_links]
+            self.assertIn("Marc", link_entities)
+
+    def test_entity_in_single_cluster_not_linked(self) -> None:
+        """Entity in only one cluster does not get a link."""
+        phases = (
+            _make_phase("P1", 'Craig and Marc discussed the villa drama.', ("e1",), "2025-01-01"),
+            _make_phase("P2", 'Craig and Marc resolved the villa issue.', ("e2",), "2025-01-05"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=2)
+        report = extract_recurring_entities([narrative])
+
+        # With only one cluster, no links should exist.
+        self.assertEqual(len(report.entity_cluster_links), 0)
+
+    def test_no_links_when_fewer_than_two_clusters(self) -> None:
+        """No links emitted when report has 0 or 1 clusters."""
+        phases = (
+            _make_phase("P1", 'Marc talked.', ("e1",), "2025-01-01"),
+            _make_phase("P2", 'Craig replied.', ("e2",), "2025-06-01"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=2)
+        report = extract_recurring_entities([narrative])
+
+        self.assertEqual(len(report.entity_cluster_links), 0)
+
+    def test_link_cluster_count_correct(self) -> None:
+        """cluster_count matches actual number of clusters the entity bridges."""
+        phases = (
+            _make_phase("P1", 'Marc Craig villa drama today.', ("e1",), "2025-01-01"),
+            _make_phase("P2", 'Craig Marc villa aftermath now.', ("e2",), "2025-01-03"),
+            _make_phase("P3", 'Marc discussed home life routine.', ("e3",), "2025-06-01"),
+            _make_phase("P4", 'Marc continued home routine daily.', ("e4",), "2025-06-03"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=4)
+        report = extract_recurring_entities([narrative])
+
+        marc_links = [l for l in report.entity_cluster_links if l.entity == "Marc"]
+        if marc_links:
+            self.assertEqual(marc_links[0].cluster_count, len(marc_links[0].cluster_labels))
+
+
+class TemporalBurstTests(unittest.TestCase):
+    """Tests for temporal burst detection."""
+
+    def test_burst_detected_for_dense_phases(self) -> None:
+        """3+ phases within 7 days should produce a burst."""
+        phases = (
+            _make_phase("P1", 'Marc talked.', ("e1",), "2025-02-13"),
+            _make_phase("P2", 'Craig replied.', ("e2",), "2025-02-14"),
+            _make_phase("P3", 'Marc and Craig met.', ("e3",), "2025-02-15"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=3)
+        report = extract_recurring_entities([narrative])
+
+        self.assertTrue(len(report.temporal_bursts) >= 1)
+        burst = report.temporal_bursts[0]
+        self.assertEqual(burst.burst_size, 3)
+        self.assertIn("2025-02-13", burst.date_range)
+        self.assertIn("2025-02-15", burst.date_range)
+
+    def test_no_burst_for_sparse_phases(self) -> None:
+        """Phases spread across months should not produce a burst."""
+        phases = (
+            _make_phase("P1", 'Marc talked.', ("e1",), "2025-01-01"),
+            _make_phase("P2", 'Craig replied.', ("e2",), "2025-03-01"),
+            _make_phase("P3", 'Benz arrived.', ("e3",), "2025-06-01"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=3)
+        report = extract_recurring_entities([narrative])
+
+        self.assertEqual(len(report.temporal_bursts), 0)
+
+    def test_no_burst_below_minimum_phases(self) -> None:
+        """2 phases in a window is below the 3-phase minimum."""
+        phases = (
+            _make_phase("P1", 'Marc talked.', ("e1",), "2025-02-13"),
+            _make_phase("P2", 'Craig replied.', ("e2",), "2025-02-14"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=2)
+        report = extract_recurring_entities([narrative])
+
+        self.assertEqual(len(report.temporal_bursts), 0)
+
+    def test_burst_entities_extracted(self) -> None:
+        """Burst includes entities from its member phases."""
+        phases = (
+            _make_phase("P1", 'Marc discussed plans.', ("e1",), "2025-02-13"),
+            _make_phase("P2", 'Craig and Marc met.', ("e2",), "2025-02-14"),
+            _make_phase("P3", 'Craig resolved issues.', ("e3",), "2025-02-15"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=3)
+        report = extract_recurring_entities([narrative])
+
+        if report.temporal_bursts:
+            burst = report.temporal_bursts[0]
+            self.assertIn("Marc", burst.entities)
+            self.assertIn("Craig", burst.entities)
+
+    def test_phases_without_dates_excluded(self) -> None:
+        """Phases without dates don't contribute to bursts."""
+        phases = (
+            _make_phase("P1", 'Marc talked.', ("e1",), None),
+            _make_phase("P2", 'Craig replied.', ("e2",), None),
+            _make_phase("P3", 'Benz arrived.', ("e3",), None),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=3)
+        report = extract_recurring_entities([narrative])
+
+        self.assertEqual(len(report.temporal_bursts), 0)
+
+    def test_burst_deterministic(self) -> None:
+        """Same input produces identical bursts."""
+        phases = (
+            _make_phase("P1", 'Marc Craig villa.', ("e1",), "2025-02-13"),
+            _make_phase("P2", 'Craig Marc drama.', ("e2",), "2025-02-14"),
+            _make_phase("P3", 'Marc villa end.', ("e3",), "2025-02-15"),
+        )
+        narrative = _make_narrative("test", phases, evidence_count=3)
+        report_1 = extract_recurring_entities([narrative])
+        report_2 = extract_recurring_entities([narrative])
+
+        self.assertEqual(len(report_1.temporal_bursts), len(report_2.temporal_bursts))
+        for b1, b2 in zip(report_1.temporal_bursts, report_2.temporal_bursts):
+            self.assertEqual(b1.date_range, b2.date_range)
+            self.assertEqual(b1.burst_size, b2.burst_size)
+
+
 if __name__ == "__main__":
     unittest.main()

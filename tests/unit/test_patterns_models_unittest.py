@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import unittest
 
-from rag.patterns.models import EntityOccurrence, PatternReport, RecurringEntity, TopicCluster
+from rag.patterns.models import (
+    EntityClusterLink,
+    EntityOccurrence,
+    PatternReport,
+    RecurringEntity,
+    TemporalBurst,
+    TopicCluster,
+)
 
 
 class EntityOccurrenceTests(unittest.TestCase):
@@ -116,6 +123,8 @@ class PatternReportTests(unittest.TestCase):
                 ),
             ),
             clusters=(),
+            entity_cluster_links=(),
+            temporal_bursts=(),
             evidence_count=5,
         )
 
@@ -151,14 +160,14 @@ class PatternReportTests(unittest.TestCase):
         self.assertEqual(occ_d["excerpt"], "Marc said hello.")
 
     def test_empty_report(self) -> None:
-        report = PatternReport(query="nothing", entities=(), clusters=(), evidence_count=0)
+        report = PatternReport(query="nothing", entities=(), clusters=(), entity_cluster_links=(), temporal_bursts=(), evidence_count=0)
         d = report.to_dict()
         self.assertEqual(d["query"], "nothing")
         self.assertEqual(d["entities"], [])
         self.assertEqual(d["evidence_count"], 0)
 
     def test_empty_report_construction(self) -> None:
-        report = PatternReport(query="nothing", entities=(), clusters=(), evidence_count=0)
+        report = PatternReport(query="nothing", entities=(), clusters=(), entity_cluster_links=(), temporal_bursts=(), evidence_count=0)
         self.assertEqual(len(report.entities), 0)
         self.assertEqual(report.evidence_count, 0)
 
@@ -172,6 +181,8 @@ class PatternReportTests(unittest.TestCase):
                 RecurringEntity("Benz", (), 0),
             ),
             clusters=(),
+            entity_cluster_links=(),
+            temporal_bursts=(),
             evidence_count=0,
         )
         d = report.to_dict()
@@ -239,6 +250,8 @@ class TopicClusterTests(unittest.TestCase):
             query="test",
             entities=(),
             clusters=(cluster,),
+            entity_cluster_links=(),
+            temporal_bursts=(),
             evidence_count=5,
         )
         d = report.to_dict()
@@ -246,9 +259,108 @@ class TopicClusterTests(unittest.TestCase):
         self.assertEqual(d["clusters"][0]["label"], "Marc, Craig: meeting, villa")
 
     def test_empty_clusters_in_report(self) -> None:
-        report = PatternReport(query="test", entities=(), clusters=(), evidence_count=0)
+        report = PatternReport(query="test", entities=(), clusters=(), entity_cluster_links=(), temporal_bursts=(), evidence_count=0)
         d = report.to_dict()
         self.assertEqual(d["clusters"], [])
+
+
+class EntityClusterLinkTests(unittest.TestCase):
+    """Tests for EntityClusterLink construction and serialization."""
+
+    def _make_link(self) -> EntityClusterLink:
+        return EntityClusterLink(
+            entity="Marc",
+            cluster_labels=("Marc, Craig: villa, drama", "Marc: home, really"),
+            cluster_count=2,
+            total_phase_count=4,
+        )
+
+    def test_construction(self) -> None:
+        link = self._make_link()
+        self.assertEqual(link.entity, "Marc")
+        self.assertEqual(link.cluster_count, 2)
+        self.assertEqual(link.total_phase_count, 4)
+        self.assertEqual(len(link.cluster_labels), 2)
+
+    def test_frozen(self) -> None:
+        link = self._make_link()
+        with self.assertRaises(AttributeError):
+            link.entity = "changed"  # type: ignore[misc]
+
+    def test_to_dict(self) -> None:
+        link = self._make_link()
+        d = link.to_dict()
+        self.assertEqual(d["entity"], "Marc")
+        self.assertEqual(d["cluster_count"], 2)
+        self.assertEqual(d["total_phase_count"], 4)
+        self.assertIsInstance(d["cluster_labels"], list)
+        self.assertEqual(d["cluster_labels"], ["Marc, Craig: villa, drama", "Marc: home, really"])
+
+
+class TemporalBurstTests(unittest.TestCase):
+    """Tests for TemporalBurst construction and serialization."""
+
+    def _make_burst(self) -> TemporalBurst:
+        return TemporalBurst(
+            date_range="2025-02-13 to 2025-02-15",
+            phase_labels=("P1: Marc, Craig", "P2: Craig", "P3: Marc"),
+            entities=("Craig", "Marc"),
+            burst_size=3,
+        )
+
+    def test_construction(self) -> None:
+        burst = self._make_burst()
+        self.assertEqual(burst.date_range, "2025-02-13 to 2025-02-15")
+        self.assertEqual(burst.burst_size, 3)
+        self.assertEqual(len(burst.phase_labels), 3)
+        self.assertEqual(len(burst.entities), 2)
+
+    def test_frozen(self) -> None:
+        burst = self._make_burst()
+        with self.assertRaises(AttributeError):
+            burst.date_range = "changed"  # type: ignore[misc]
+
+    def test_to_dict(self) -> None:
+        burst = self._make_burst()
+        d = burst.to_dict()
+        self.assertEqual(d["date_range"], "2025-02-13 to 2025-02-15")
+        self.assertEqual(d["burst_size"], 3)
+        self.assertIsInstance(d["phase_labels"], list)
+        self.assertIsInstance(d["entities"], list)
+        self.assertEqual(d["entities"], ["Craig", "Marc"])
+
+    def test_single_date_burst(self) -> None:
+        burst = TemporalBurst(
+            date_range="2025-02-15",
+            phase_labels=("P1", "P2", "P3"),
+            entities=(),
+            burst_size=3,
+        )
+        self.assertEqual(burst.date_range, "2025-02-15")
+
+    def test_pattern_report_with_links_and_bursts(self) -> None:
+        """PatternReport serializes entity_cluster_links and temporal_bursts."""
+        link = EntityClusterLink(entity="Marc", cluster_labels=("C1", "C2"), cluster_count=2, total_phase_count=4)
+        burst = TemporalBurst(date_range="2025-02-15", phase_labels=("P1", "P2", "P3"), entities=("Marc",), burst_size=3)
+        report = PatternReport(
+            query="test",
+            entities=(),
+            clusters=(),
+            entity_cluster_links=(link,),
+            temporal_bursts=(burst,),
+            evidence_count=5,
+        )
+        d = report.to_dict()
+        self.assertEqual(len(d["entity_cluster_links"]), 1)
+        self.assertEqual(d["entity_cluster_links"][0]["entity"], "Marc")
+        self.assertEqual(len(d["temporal_bursts"]), 1)
+        self.assertEqual(d["temporal_bursts"][0]["burst_size"], 3)
+
+    def test_empty_links_and_bursts_in_report(self) -> None:
+        report = PatternReport(query="test", entities=(), clusters=(), entity_cluster_links=(), temporal_bursts=(), evidence_count=0)
+        d = report.to_dict()
+        self.assertEqual(d["entity_cluster_links"], [])
+        self.assertEqual(d["temporal_bursts"], [])
 
 
 if __name__ == "__main__":
