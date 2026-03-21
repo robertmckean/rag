@@ -23,11 +23,12 @@ What works:
 - [x] Entity noise suppression via expanded denylist (Phase 7D)
 - [x] Cross-cluster entity links and temporal burst detection (Phase 8)
 - [x] Deterministic query routing with 5 intent types (Phase 9)
-- [x] 342 tests passing
+- [x] Entity-scoped query routing via ENTITY_SCOPED intent (Phase 10A)
+- [x] 366 tests passing
 
 What does not work:
 
-- [ ] Cannot scope queries to a specific entity ("what happened with Marc")
+- [x] ~~Cannot scope queries to a specific entity~~ → entity-scoped routing works (Phase 10A)
 - [ ] Cannot track how thinking about a topic evolved across time
 - [ ] Cannot detect contradictions or reversals in past positions
 - [ ] Cannot chain narratives across multiple topics/queries
@@ -46,16 +47,16 @@ Prerequisite: none. Highest leverage immediate improvement.
 
 ### 10A: Entity scope in router
 
-- [ ] Add ENTITY_SCOPED intent to router (keyword: entity name + "what/how/when")
-- [ ] Detect the target entity name from the query string by matching against
+- [x] Add ENTITY_SCOPED intent to router (keyword: entity name + "what/how/when")
+- [x] Detect the target entity name from the query string by matching against
       PatternReport.entities names (case-insensitive)
-- [ ] Filter PatternReport.entities to the target entity
-- [ ] Filter PatternReport.clusters to those containing the target in key_entities
-- [ ] Filter entity_cluster_links to the target entity
-- [ ] Filter temporal_bursts to those whose entities include the target
-- [ ] Return a scoped answer grounded only in the filtered data
-- [ ] Add `--answer "what happened with Marc"` test on real corpus
-- [ ] Add unit tests: entity detected, correct filtering, unknown entity fallback
+- [x] Filter PatternReport.entities to the target entity
+- [x] Filter PatternReport.clusters to those containing the target in key_entities
+- [x] Filter entity_cluster_links to the target entity
+- [x] Filter temporal_bursts to those whose entities include the target
+- [x] Return a scoped answer grounded only in the filtered data
+- [x] Add `--answer "what happened with Marc"` test on real corpus
+- [x] Add unit tests: entity detected, correct filtering, unknown entity fallback
 
 ### 10B: Entity scope in narrative
 

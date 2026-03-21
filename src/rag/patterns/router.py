@@ -7,6 +7,9 @@ No LLM, no new analytics — routing and formatting only.
 
 from __future__ import annotations
 
+import re
+import string
+
 from enum import Enum
 
 from rag.narrative.models import NarrativeReconstruction
@@ -14,6 +17,7 @@ from rag.patterns.models import PatternReport
 
 
 class Intent(Enum):
+    ENTITY_SCOPED = "entity_scoped"
     ENTITY = "entity"
     THEME = "theme"
     CROSS_TOPIC = "cross_topic"
@@ -50,9 +54,61 @@ _INTENT_KEYWORDS: list[tuple[Intent, frozenset[str]]] = [
 ]
 
 
-def classify_intent(query: str) -> Intent:
-    """Classify a user question into one of the supported intents."""
+# Question words that suggest the user is asking about a specific entity.
+_ENTITY_SCOPED_QUESTION_WORDS: frozenset[str] = frozenset({
+    "what", "how", "when", "timeline", "happened", "with",
+    "about", "did", "history", "went", "go", "evolve", "evolved",
+})
+
+
+def _normalize_query(query: str) -> str:
+    """Lowercase and strip punctuation for matching."""
+    return query.lower().translate(str.maketrans("", "", string.punctuation))
+
+
+def _detect_entity(query: str, report: PatternReport) -> str | None:
+    """Find the best-matching entity from the report in the query.
+
+    Uses whole-word case-insensitive matching.  If multiple entities match,
+    returns the one with the highest occurrence_count.
+    """
+    normalized = _normalize_query(query)
+
+    matches: list[tuple[str, int]] = []
+    for entity in report.entities:
+        # Whole-word match: entity name boundaries must be word edges.
+        pattern = r"\b" + re.escape(entity.name.lower()) + r"\b"
+        if re.search(pattern, normalized):
+            matches.append((entity.name, entity.occurrence_count))
+
+    if not matches:
+        return None
+
+    # Highest occurrence count wins; ties broken alphabetically for determinism.
+    matches.sort(key=lambda m: (-m[1], m[0]))
+    return matches[0][0]
+
+
+def classify_intent(
+    query: str,
+    report: PatternReport | None = None,
+) -> Intent:
+    """Classify a user question into one of the supported intents.
+
+    When *report* is provided, ENTITY_SCOPED is checked first: if the query
+    contains both a known entity name and a question pattern, ENTITY_SCOPED
+    wins before keyword scoring.
+    """
     tokens = set(query.lower().split())
+
+    # Check ENTITY_SCOPED before keyword scoring.
+    if report is not None:
+        entity = _detect_entity(query, report)
+        if entity is not None:
+            # Require at least one question-pattern word alongside the entity.
+            stripped_tokens = set(_normalize_query(query).split())
+            if stripped_tokens & _ENTITY_SCOPED_QUESTION_WORDS:
+                return Intent.ENTITY_SCOPED
 
     best_intent = Intent.UNKNOWN
     best_score = 0
@@ -72,8 +128,12 @@ def route_answer(
     narratives: list[NarrativeReconstruction],
 ) -> str:
     """Route a user question to the appropriate data and produce an answer."""
-    intent = classify_intent(query)
+    intent = classify_intent(query, report)
 
+    if intent == Intent.ENTITY_SCOPED:
+        entity = _detect_entity(query, report)
+        assert entity is not None  # guaranteed by classify_intent
+        return _answer_entity_scoped(entity, report)
     if intent == Intent.ENTITY:
         return _answer_entity(report)
     if intent == Intent.THEME:
@@ -85,6 +145,79 @@ def route_answer(
     if intent == Intent.TIMELINE:
         return _answer_timeline(report, narratives)
     return _answer_unknown(report)
+
+
+def _answer_entity_scoped(entity_name: str, report: PatternReport) -> str:
+    """Produce an answer scoped to a single entity using filtered data."""
+    # Filter entities.
+    entity_match = None
+    for ent in report.entities:
+        if ent.name.lower() == entity_name.lower():
+            entity_match = ent
+            break
+
+    if entity_match is None:
+        return f"No data found for entity '{entity_name}'."
+
+    # Filter clusters: keep those where entity appears in key_entities.
+    scoped_clusters = tuple(
+        c for c in report.clusters
+        if entity_name in c.key_entities
+    )
+
+    # Filter entity_cluster_links.
+    scoped_links = tuple(
+        l for l in report.entity_cluster_links
+        if l.entity == entity_name
+    )
+
+    # Filter temporal_bursts.
+    scoped_bursts = tuple(
+        b for b in report.temporal_bursts
+        if entity_name in b.entities
+    )
+
+    # Build answer.
+    lines = [f"{entity_match.name} — {entity_match.occurrence_count} occurrences", ""]
+
+    # Date span.
+    dates = [o.created_at for o in entity_match.occurrences if o.created_at]
+    if len(dates) >= 2:
+        lines.append(f"  Active period: {dates[0]} to {dates[-1]}")
+        lines.append("")
+
+    # Clusters.
+    if scoped_clusters:
+        lines.append(f"  Appears in {len(scoped_clusters)} topic cluster{'s' if len(scoped_clusters) != 1 else ''}:")
+        for c in scoped_clusters[:3]:
+            date_part = f" ({c.date_range})" if c.date_range else ""
+            lines.append(f"    - {c.label}{date_part}")
+        if len(scoped_clusters) > 3:
+            lines.append(f"    ... and {len(scoped_clusters) - 3} more")
+        lines.append("")
+
+    # Cross-cluster links.
+    if scoped_links:
+        link = scoped_links[0]
+        lines.append(f"  Bridges {link.cluster_count} clusters across {link.total_phase_count} phases")
+        lines.append("")
+
+    # Temporal bursts.
+    if scoped_bursts:
+        lines.append(f"  Activity bursts:")
+        for b in scoped_bursts[:3]:
+            lines.append(f"    - {b.date_range}: {b.burst_size} phases")
+        lines.append("")
+
+    # Snippets: show up to 3 excerpts.
+    snippets = entity_match.occurrences[:3]
+    if snippets:
+        lines.append("  Key mentions:")
+        for occ in snippets:
+            date_prefix = f"[{occ.created_at}] " if occ.created_at else ""
+            lines.append(f"    - {date_prefix}{occ.excerpt}")
+
+    return "\n".join(lines)
 
 
 def _answer_entity(report: PatternReport) -> str:
@@ -183,6 +316,7 @@ def _answer_unknown(report: PatternReport) -> str:
         "I can answer questions about:",
         "",
         "  - Who are the main people? (entity-focused)",
+        "  - What happened with [name]? (entity-scoped)",
         "  - What are the main themes? (theme-focused)",
         "  - Who connects multiple topics? (cross-topic)",
         "  - When were things most active? (temporal intensity)",

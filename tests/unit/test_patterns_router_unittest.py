@@ -13,7 +13,7 @@ from rag.patterns.models import (
     TemporalBurst,
     TopicCluster,
 )
-from rag.patterns.router import Intent, classify_intent, route_answer
+from rag.patterns.router import Intent, classify_intent, route_answer, _detect_entity
 
 
 def _empty_report() -> PatternReport:
@@ -230,6 +230,181 @@ class AnswerRoutingTests(unittest.TestCase):
         report = _populated_report()
         answers = [route_answer("who are the main people", report, []) for _ in range(5)]
         self.assertTrue(all(a == answers[0] for a in answers))
+
+
+class EntityDetectionTests(unittest.TestCase):
+    """Tests for entity detection from queries."""
+
+    def test_entity_detected_from_query(self) -> None:
+        report = _populated_report()
+        self.assertEqual(_detect_entity("what happened with Marc", report), "Marc")
+
+    def test_entity_detected_case_insensitive(self) -> None:
+        report = _populated_report()
+        self.assertEqual(_detect_entity("what happened with marc", report), "Marc")
+
+    def test_highest_frequency_entity_selected(self) -> None:
+        """When multiple entities match, highest occurrence count wins."""
+        marc = RecurringEntity(
+            name="Marc",
+            occurrences=(
+                EntityOccurrence("e1", "2025-02-04", "Marc said hello."),
+                EntityOccurrence("e2", "2025-07-22", "Marc returned."),
+                EntityOccurrence("e3", "2025-08-01", "Marc again."),
+            ),
+            occurrence_count=3,
+        )
+        craig = RecurringEntity(
+            name="Craig",
+            occurrences=(EntityOccurrence("e4", "2025-02-04", "Craig was there."),),
+            occurrence_count=1,
+        )
+        report = PatternReport(
+            query="test", entities=(marc, craig), clusters=(),
+            entity_cluster_links=(), temporal_bursts=(), evidence_count=0,
+        )
+        self.assertEqual(_detect_entity("Marc and Craig were there", report), "Marc")
+
+    def test_no_entity_match_returns_none(self) -> None:
+        report = _populated_report()
+        self.assertIsNone(_detect_entity("what happened with Zephyr", report))
+
+    def test_whole_word_match_only(self) -> None:
+        """'Marc' should not match inside 'Marcelino'."""
+        entity = RecurringEntity(
+            name="Marc",
+            occurrences=(EntityOccurrence("e1", "2025-01-01", "Marc."),),
+            occurrence_count=1,
+        )
+        report = PatternReport(
+            query="test", entities=(entity,), clusters=(),
+            entity_cluster_links=(), temporal_bursts=(), evidence_count=0,
+        )
+        self.assertIsNone(_detect_entity("Marcelino went home", report))
+
+    def test_entity_with_punctuation_in_query(self) -> None:
+        report = _populated_report()
+        self.assertEqual(_detect_entity("what happened with Marc?", report), "Marc")
+
+
+class EntityScopedIntentTests(unittest.TestCase):
+    """Tests for ENTITY_SCOPED intent classification."""
+
+    def test_entity_scoped_intent_basic(self) -> None:
+        report = _populated_report()
+        self.assertEqual(classify_intent("what happened with Marc", report), Intent.ENTITY_SCOPED)
+
+    def test_entity_scoped_with_how(self) -> None:
+        report = _populated_report()
+        self.assertEqual(classify_intent("how did things go with Craig", report), Intent.ENTITY_SCOPED)
+
+    def test_entity_name_only_not_scoped(self) -> None:
+        """Entity name alone without question pattern should not trigger ENTITY_SCOPED."""
+        report = _populated_report()
+        result = classify_intent("Marc", report)
+        self.assertNotEqual(result, Intent.ENTITY_SCOPED)
+
+    def test_question_without_entity_not_scoped(self) -> None:
+        """Question patterns without a known entity should fall through to keyword scoring."""
+        report = _populated_report()
+        result = classify_intent("what happened with Zephyr", report)
+        self.assertNotEqual(result, Intent.ENTITY_SCOPED)
+
+    def test_pure_entity_query_not_overridden(self) -> None:
+        """'who are the main people' should stay ENTITY, not become ENTITY_SCOPED."""
+        report = _populated_report()
+        self.assertEqual(classify_intent("who are the main people", report), Intent.ENTITY)
+
+    def test_no_report_falls_through(self) -> None:
+        """Without a report, classify_intent should not produce ENTITY_SCOPED."""
+        result = classify_intent("what happened with Marc")
+        self.assertNotEqual(result, Intent.ENTITY_SCOPED)
+
+    def test_deterministic(self) -> None:
+        report = _populated_report()
+        results = [classify_intent("what happened with Marc", report) for _ in range(10)]
+        self.assertTrue(all(r == Intent.ENTITY_SCOPED for r in results))
+
+
+class EntityScopedAnswerTests(unittest.TestCase):
+    """Tests for entity-scoped answer formatting."""
+
+    def test_scoped_answer_contains_entity_name(self) -> None:
+        report = _populated_report()
+        answer = route_answer("what happened with Marc", report, [])
+        self.assertIn("Marc", answer)
+
+    def test_scoped_answer_contains_occurrence_count(self) -> None:
+        report = _populated_report()
+        answer = route_answer("what happened with Marc", report, [])
+        self.assertIn("2 occurrences", answer)
+
+    def test_scoped_answer_shows_relevant_clusters_only(self) -> None:
+        report = _populated_report()
+        answer = route_answer("what happened with Marc", report, [])
+        # Marc is in both clusters.
+        self.assertIn("villa, drama", answer)
+        self.assertIn("home, routine", answer)
+
+    def test_scoped_answer_filters_clusters(self) -> None:
+        """Craig should only see clusters containing Craig."""
+        report = _populated_report()
+        answer = route_answer("what happened with Craig", report, [])
+        self.assertIn("villa, drama", answer)
+        # Craig is NOT in the "Marc: home, routine" cluster.
+        self.assertNotIn("home, routine", answer)
+
+    def test_scoped_answer_shows_bursts(self) -> None:
+        report = _populated_report()
+        answer = route_answer("what happened with Marc", report, [])
+        self.assertIn("2025-02-13", answer)
+
+    def test_scoped_answer_filters_bursts(self) -> None:
+        """Entity not in any burst should not show burst section."""
+        entity = RecurringEntity(
+            name="Benz",
+            occurrences=(EntityOccurrence("e9", "2025-05-01", "Benz arrived."),),
+            occurrence_count=1,
+        )
+        report = PatternReport(
+            query="test",
+            entities=(entity,),
+            clusters=(),
+            entity_cluster_links=(),
+            temporal_bursts=_populated_report().temporal_bursts,
+            evidence_count=5,
+        )
+        answer = route_answer("what happened with Benz", report, [])
+        self.assertNotIn("burst", answer.lower())
+
+    def test_scoped_answer_no_cross_entity_leakage(self) -> None:
+        """Scoped answer for Craig should not mention Marc's solo clusters or links."""
+        report = _populated_report()
+        answer = route_answer("what happened with Craig", report, [])
+        # Craig has no entity_cluster_links.
+        self.assertNotIn("Bridges", answer)
+
+    def test_scoped_answer_shows_key_mentions(self) -> None:
+        report = _populated_report()
+        answer = route_answer("what happened with Marc", report, [])
+        self.assertIn("Marc said hello", answer)
+
+    def test_scoped_answer_unknown_entity_fallback(self) -> None:
+        report = _populated_report()
+        answer = route_answer("what happened with Zephyr", report, [])
+        # Should fall through to keyword scoring, not ENTITY_SCOPED.
+        self.assertNotIn("occurrences", answer)
+
+    def test_scoped_answer_deterministic(self) -> None:
+        report = _populated_report()
+        answers = [route_answer("what happened with Marc", report, []) for _ in range(5)]
+        self.assertTrue(all(a == answers[0] for a in answers))
+
+    def test_scoped_answer_no_speculation(self) -> None:
+        report = _populated_report()
+        answer = route_answer("what happened with Marc", report, [])
+        for word in ("probably", "might", "maybe", "possibly", "I think"):
+            self.assertNotIn(word, answer)
 
 
 if __name__ == "__main__":
