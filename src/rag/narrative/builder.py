@@ -154,13 +154,21 @@ _LABEL_NOISE_WORDS = frozenset({
 })
 
 
-def _entity_terms(item: EvidenceItem) -> set[str]:
-    """Extract capitalized proper-noun candidates from an evidence excerpt."""
+def entity_terms_from_text(text: str) -> set[str]:
+    """Extract capitalized proper-noun candidates from arbitrary text.
+
+    Shared helper used by both narrative grouping and pattern extraction.
+    """
     return {
         m.group(0)
-        for m in re.finditer(r"\b[A-Z][a-z]{2,}\b", item.citation.excerpt)
+        for m in re.finditer(r"\b[A-Z][a-z]{2,}\b", text)
         if m.group(0) not in _NON_ENTITY_WORDS and m.group(0) not in _LABEL_NOISE_WORDS
     }
+
+
+def _entity_terms(item: EvidenceItem) -> set[str]:
+    """Extract capitalized proper-noun candidates from an evidence excerpt."""
+    return entity_terms_from_text(item.citation.excerpt)
 
 
 def _topic_overlap(terms_a: set[str], terms_b: set[str]) -> float:

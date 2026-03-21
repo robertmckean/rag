@@ -7,12 +7,13 @@ this repository.
 
 Build a personal RAG system over exported ChatGPT and Claude histories. The
 current codebase ingests raw exports into canonical normalized records, adds a
-local lexical retrieval layer, and now supports deterministic grounded answers
-plus deterministic answer evaluation over a single normalized run.
+local lexical retrieval layer, supports deterministic grounded answers plus
+deterministic answer evaluation, reconstructs grounded narratives from
+retrieved evidence, and extracts recurring-entity patterns across narratives.
 
 ## Project Status
 
-- Active milestone: Phase 4A hybrid retrieval baseline
+- Active milestone: Phase 7 pattern extraction
 - Phase 1 normalization is complete and its output contract is frozen
 - Phase 2 currently supports BM25 lexical retrieval, semantic retrieval over
   run-local message embeddings, hybrid retrieval, contextual window results,
@@ -22,6 +23,11 @@ plus deterministic answer evaluation over a single normalized run.
 - Phase 3A supports an opt-in `conversational_memory` grounding mode for
   same-window local evidence composition
 - Phase 3B supports constrained LLM-backed answer synthesis via `--llm`
+- Phase 6 supports grounded narrative reconstruction from retrieved evidence
+  with configurable phase grouping, transition detection, gap detection, and
+  limitation reporting
+- Phase 7 supports recurring-entity pattern extraction across narratives with
+  explicit alias normalization and deterministic output
 - Hybrid retrieval is now the active retrieval extension path; BM25 remains the
   lexical baseline and semantic retrieval is additive rather than a replacement
 - Prefer the current code in `src/rag/` and the run artifacts under
@@ -46,9 +52,13 @@ plus deterministic answer evaluation over a single normalized run.
   Phase 3A grounded answer models and deterministic answer pipeline
 - `src/rag/eval/`
   deterministic benchmark metrics and eval runner for grounded answers
+- `src/rag/narrative/`
+  Phase 6 grounded narrative reconstruction from retrieved evidence
+- `src/rag/patterns/`
+  Phase 7 recurring-entity pattern extraction with alias normalization
 - `src/rag/cli/`
   CLI entry points for inspection, normalization, analysis, retrieval, answers,
-  and evals
+  evals, narrative reconstruction, and pattern extraction
 - `data/raw/`
   immutable provider export inputs
 - `data/normalized/runs/`
@@ -68,6 +78,8 @@ plus deterministic answer evaluation over a single normalized run.
   explicitly approves a contract change
 - Phase 2 works against existing normalized artifacts only
 - Phase 3A builds on Phase 2 retrieval without changing retrieval semantics
+- Phase 6 works against Phase 2 retrieval + Phase 3A evidence qualification
+- Phase 7 works against Phase 6 narrative reconstructions
 - Current non-goals:
   vector DBs, UI, cross-run retrieval, rerankers, chatbot behavior, and
   semantic answer-grounding by LLM
