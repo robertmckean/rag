@@ -4,7 +4,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag.answering.answer import answer_query, answer_result_json
-from rag.answering.generator_llm import LLMSynthesisRequest, synthesize_answer_with_llm
+from rag.answering.generator_llm import (
+    LLMSynthesisRequest,
+    synthesize_answer_with_llm,
+    _entity_surface_forms_strict,
+    _entity_surface_forms_permissive,
+)
 from rag.answering.models import AnswerStatus
 
 
@@ -560,6 +565,64 @@ class AnsweringTests(unittest.TestCase):
             "created_at": created_at,
             "text": text,
         }
+
+
+    # Verify that strict entity extraction ignores sentence-initial capitalization.
+    def test_strict_entity_extraction_ignores_sentence_starters(self) -> None:
+        text = "Because the evidence is incomplete. From the provided excerpts, None of them describe Marc."
+        entities = _entity_surface_forms_strict(text)
+        self.assertNotIn("Because", entities)
+        self.assertNotIn("From", entities)
+        self.assertNotIn("None", entities)
+        self.assertIn("Marc", entities)
+
+    # Verify that permissive extraction catches all capitalized words.
+    def test_permissive_entity_extraction_catches_all_capitalized_words(self) -> None:
+        text = "Because Marc went to Cambodia and met Craig there."
+        entities = _entity_surface_forms_permissive(text)
+        self.assertIn("Because", entities)
+        self.assertIn("Marc", entities)
+        self.assertIn("Cambodia", entities)
+        self.assertIn("Craig", entities)
+
+    # Verify that possessive forms are normalized in strict extraction.
+    def test_strict_entity_extraction_normalizes_possessives(self) -> None:
+        text = "This is about Marc's profile and Craig's meeting."
+        entities = _entity_surface_forms_strict(text)
+        self.assertIn("Marc", entities)
+        self.assertIn("Craig", entities)
+        self.assertNotIn("Marc's", entities)
+
+    # Verify that common English words in mid-sentence positions are not flagged as entities.
+    def test_strict_entity_extraction_excludes_common_words(self) -> None:
+        text = 'On 2025-01-20: You wrote "some text." Summary of the findings.'
+        entities = _entity_surface_forms_strict(text)
+        self.assertNotIn("You", entities)
+        self.assertNotIn("Summary", entities)
+
+    # Verify that hybrid mode passes through to LLM synthesis with the hybrid flag set.
+    def test_hybrid_mode_passes_hybrid_flag_to_synthesis(self) -> None:
+        with patch("rag.answering.answer.synthesize_answer_with_llm") as mocked_synthesize:
+            mocked_synthesize.return_value = type(
+                "StubSynthesis", (),
+                {"answer_text": "Hybrid answer about burnout.", "citation_ids": ("e1",)},
+            )()
+            result = answer_query(
+                self.run_dir, "What have I said about burnout?",
+                limit=8, max_evidence=5, hybrid=True,
+            )
+
+        call_args = mocked_synthesize.call_args[0][0]
+        self.assertTrue(call_args.hybrid)
+        self.assertEqual(result.answer, "Hybrid answer about burnout.")
+
+    # Verify that fallback from LLM synthesis logs a warning (not silent).
+    def test_llm_fallback_logs_warning(self) -> None:
+        with self.assertLogs("rag.answering.answer", level="WARNING") as log:
+            with patch("rag.answering.answer.synthesize_answer_with_llm", side_effect=ValueError("bad llm output")):
+                answer_query(self.run_dir, "What have I said about burnout?", limit=8, max_evidence=5, llm=True)
+
+        self.assertTrue(any("falling back to deterministic" in msg for msg in log.output))
 
 
 if __name__ == "__main__":

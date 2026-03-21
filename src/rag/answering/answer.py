@@ -7,6 +7,7 @@ Internal qualification, status, composition, and diagnostics live in submodules.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from rag.answering.generator_llm import LLMSynthesisRequest, synthesize_answer_with_llm
@@ -45,6 +46,8 @@ from rag.answering.diagnostics import (  # noqa: F401
     render_qualification_debug,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # Phase 3A answers are retrieval-bounded summaries rather than a new search system.
 # Evidence is selected from existing retrieval windows and then capped deterministically.
@@ -63,6 +66,7 @@ def answer_query(
     filters: RetrievalFilters | None = None,
     llm: bool = False,
     llm_model: str | None = None,
+    hybrid: bool = False,
 ) -> AnswerResult:
     if retrieval_mode not in ANSWER_RETRIEVAL_MODES:
         raise ValueError(
@@ -116,8 +120,9 @@ def answer_query(
     )
     return _apply_optional_llm_synthesis(
         result,
-        llm=llm,
+        llm=llm or hybrid,
         llm_model=llm_model,
+        hybrid=hybrid,
     )
 
 
@@ -177,12 +182,14 @@ def _apply_optional_llm_synthesis(
     *,
     llm: bool,
     llm_model: str | None,
+    hybrid: bool = False,
 ) -> AnswerResult:
     if not llm:
         return result
     if not result.evidence_used:
         return result
 
+    mode_label = "hybrid" if hybrid else "llm"
     try:
         synthesis = synthesize_answer_with_llm(
             LLMSynthesisRequest(
@@ -192,9 +199,11 @@ def _apply_optional_llm_synthesis(
                 gaps=result.gaps,
                 conflicts=result.conflicts,
                 model=llm_model,
+                hybrid=hybrid,
             )
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("LLM synthesis (%s) failed, falling back to deterministic answer: %s", mode_label, exc)
         return result
 
     citations_by_id = {f"e{item.rank}": item.citation for item in result.evidence_used}

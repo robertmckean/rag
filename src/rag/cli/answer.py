@@ -43,8 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--limit", type=int, default=8, help="Maximum number of retrieval results to inspect.")
     parser.add_argument("--max-evidence", type=int, default=5, help="Maximum number of evidence items to keep.")
-    parser.add_argument("--llm", action="store_true", help="Enable constrained LLM-backed answer synthesis.")
-    parser.add_argument("--llm-model", type=str, default=None, help="Optional OpenAI model override for --llm mode.")
+    parser.add_argument("--llm", action="store_true", help="Enable constrained LLM-backed answer rewrite.")
+    parser.add_argument("--hybrid", action="store_true", help="Enable hybrid synthesis: deterministic evidence with LLM-compressed narrative preserving voice and dates.")
+    parser.add_argument("--llm-model", type=str, default=None, help="Optional OpenAI model override for --llm or --hybrid mode.")
     parser.add_argument("--debug-qualification", action="store_true", help="Print detailed evidence-qualification diagnostics.")
     parser.add_argument("--json", action="store_true", help="Print the answer result as structured JSON.")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional path for structured JSON output.")
@@ -64,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             max_evidence=args.max_evidence,
             llm=args.llm,
             llm_model=args.llm_model,
+            hybrid=args.hybrid,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         safe_print_error(f"error: {exc}")

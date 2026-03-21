@@ -158,6 +158,18 @@ def detect_conflicts(evidence_items: tuple[EvidenceItem, ...], focus_terms_value
     return ()
 
 
+# Maximum excerpt length for multi-evidence answers.  Shorter than the single-evidence
+# path because several excerpts compose the answer and verbosity dilutes the signal.
+MULTI_EVIDENCE_EXCERPT_LENGTH = 120
+
+
+@dataclass(frozen=True)
+class _SynthesisEntry:
+    excerpt: str
+    created_at: str | None
+    author_role: str | None
+
+
 # Generate deterministic grounded answer prose from the selected evidence and precomputed status.
 # Multi-evidence synthesis: compose across deduplicated user-preferred windows rather than
 # quoting the single strongest excerpt.
@@ -169,12 +181,12 @@ def generate_answer_text(
     if decision.status is AnswerStatus.INSUFFICIENT_EVIDENCE:
         return "I did not find enough relevant evidence in this run to answer that question confidently."
 
-    selected = _select_synthesis_excerpts(evidence_items)
+    selected = _select_synthesis_entries(evidence_items)
     if not selected:
         return "Based on the retrieved conversation evidence, the available support is limited but relevant."
 
     if decision.status is AnswerStatus.AMBIGUOUS:
-        quoted = [f'"{e}"' for e in selected[:2]]
+        quoted = [f'"{e.excerpt}"' for e in selected[:2]]
         return "The retrieved evidence is mixed. Conflicting relevant excerpts include " + " and ".join(quoted) + "."
 
     if decision.status is AnswerStatus.PARTIALLY_SUPPORTED:
@@ -183,28 +195,35 @@ def generate_answer_text(
     return _compose_supported_answer(selected)
 
 
-# Pick the best non-redundant excerpts for answer synthesis in preference order:
-# user-authored first, then by evidence rank, with near-duplicate suppression.
-def _select_synthesis_excerpts(
+# Pick the best non-redundant evidence entries for answer synthesis.
+# User-authored first, then by evidence rank, with near-duplicate suppression.
+# Returns structured entries with timestamps for chronological ordering.
+def _select_synthesis_entries(
     evidence_items: tuple[EvidenceItem, ...],
     *,
-    max_excerpts: int = 4,
-) -> list[str]:
+    max_entries: int = 4,
+) -> list[_SynthesisEntry]:
     user_items = [item for item in evidence_items if item.author_role == "user"]
     assistant_items = [item for item in evidence_items if item.author_role != "user"]
     ordered = user_items + assistant_items
 
-    selected: list[str] = []
+    accepted_excerpts: list[str] = []
+    entries: list[_SynthesisEntry] = []
     for item in ordered:
         excerpt = item.citation.excerpt
         if not excerpt:
             continue
-        if _is_near_duplicate_excerpt(excerpt, selected):
+        if _is_near_duplicate_excerpt(excerpt, accepted_excerpts):
             continue
-        selected.append(excerpt)
-        if len(selected) >= max_excerpts:
+        accepted_excerpts.append(excerpt)
+        entries.append(_SynthesisEntry(
+            excerpt=excerpt,
+            created_at=item.citation.created_at,
+            author_role=item.author_role,
+        ))
+        if len(entries) >= max_entries:
             break
-    return selected
+    return entries
 
 
 # Detect near-duplicate excerpts by comparing normalized 60-char prefixes.
@@ -218,24 +237,60 @@ def _is_near_duplicate_excerpt(excerpt: str, accepted: list[str]) -> bool:
     return False
 
 
-# Compose a supported answer from multiple grounded excerpts.
-def _compose_supported_answer(excerpts: list[str]) -> str:
-    if len(excerpts) == 1:
-        return f'Based on the retrieved evidence: "{excerpts[0]}".'
+# Order entries chronologically when timestamps span more than one day.
+# Falls back to the original selection order when timestamps are missing or same-day.
+def _chronological_entries(entries: list[_SynthesisEntry]) -> list[_SynthesisEntry]:
+    dated = [(e, e.created_at or "") for e in entries]
+    dates = sorted({ts[:10] for _, ts in dated if len(ts) >= 10})
+    if len(dates) < 2:
+        return entries
+    return sorted(entries, key=lambda e: e.created_at or "")
+
+
+# Format a timestamp as a short human-readable date label.
+def _date_label(created_at: str | None) -> str:
+    if not created_at or len(created_at) < 10:
+        return ""
+    return created_at[:10]
+
+
+# Compress an excerpt to the multi-evidence length limit.
+def _compress_excerpt(excerpt: str, *, limit: int = MULTI_EVIDENCE_EXCERPT_LENGTH) -> str:
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[: limit - 3] + "..."
+
+
+# Compose a supported answer from multiple grounded excerpts with chronological structure.
+def _compose_supported_answer(entries: list[_SynthesisEntry]) -> str:
+    if len(entries) == 1:
+        return f'Based on the retrieved evidence: "{entries[0].excerpt}".'
+    ordered = _chronological_entries(entries)
     lines = ["Based on the retrieved evidence across multiple conversations:"]
-    for excerpt in excerpts:
-        lines.append(f'- "{excerpt}"')
+    for entry in ordered:
+        date = _date_label(entry.created_at)
+        compressed = _compress_excerpt(entry.excerpt)
+        if date:
+            lines.append(f'- ({date}) "{compressed}"')
+        else:
+            lines.append(f'- "{compressed}"')
     return "\n".join(lines)
 
 
 # Compose a partially-supported answer acknowledging gaps while presenting available evidence.
-def _compose_partial_answer(excerpts: list[str]) -> str:
-    if len(excerpts) == 1:
+def _compose_partial_answer(entries: list[_SynthesisEntry]) -> str:
+    if len(entries) == 1:
         return (
             "The retrieved evidence only partially answers the question. "
-            f'The strongest relevant excerpt says "{excerpts[0]}".'
+            f'The strongest relevant excerpt says "{entries[0].excerpt}".'
         )
+    ordered = _chronological_entries(entries)
     lines = ["The retrieved evidence only partially answers the question. The most relevant excerpts are:"]
-    for excerpt in excerpts:
-        lines.append(f'- "{excerpt}"')
+    for entry in ordered:
+        date = _date_label(entry.created_at)
+        compressed = _compress_excerpt(entry.excerpt)
+        if date:
+            lines.append(f'- ({date}) "{compressed}"')
+        else:
+            lines.append(f'- "{compressed}"')
     return "\n".join(lines)
