@@ -17,7 +17,10 @@ from rag.retrieval.types import (
     USER_VOICE_BOOST,
     ASSISTANT_VOICE_FACTOR,
     ASSISTANT_META_COMMENTARY_FACTOR,
+    ASSISTANT_RESTATEMENT_FACTOR,
     is_assistant_meta_commentary,
+    is_assistant_restatement,
+    get_nearby_user_texts,
     ParsedQuery,
     RetrievalFilters,
     STOPWORD_FILTER_ENABLED,
@@ -60,6 +63,17 @@ def rank_semantic_candidates(
         return []
     query_vector = tuple(float(value) for value in query_vectors[0])
 
+    # Lazy per-conversation index for restatement detection.
+    _conv_index_cache: dict[str, dict[str, int]] = {}
+
+    def _get_message_index(conv_id: str, msg_id: str) -> int | None:
+        if conv_id not in _conv_index_cache:
+            msgs = loaded_run.messages_by_conversation_id.get(conv_id, ())
+            _conv_index_cache[conv_id] = {
+                str(m.get("message_id", "")): idx for idx, m in enumerate(msgs)
+            }
+        return _conv_index_cache[conv_id].get(msg_id)
+
     candidates: list[_Candidate] = []
     for record in matching_records:
         message = loaded_run.message_by_id.get(record.message_id)
@@ -74,6 +88,13 @@ def rank_semantic_candidates(
         voice_factor = USER_VOICE_BOOST if record.author_role == "user" else ASSISTANT_VOICE_FACTOR
         if record.author_role == "assistant" and is_assistant_meta_commentary(record.text):
             voice_factor *= ASSISTANT_META_COMMENTARY_FACTOR
+        if record.author_role == "assistant":
+            focal_idx = _get_message_index(record.conversation_id, record.message_id)
+            if focal_idx is not None:
+                conv_msgs = loaded_run.messages_by_conversation_id.get(record.conversation_id, ())
+                user_texts = get_nearby_user_texts(conv_msgs, focal_idx)
+                if user_texts and is_assistant_restatement(record.text, user_texts):
+                    voice_factor *= ASSISTANT_RESTATEMENT_FACTOR
         voiced_score = similarity * voice_factor
         candidates.append(
             _Candidate(

@@ -23,7 +23,10 @@ from rag.retrieval.types import (  # noqa: F401
     USER_VOICE_BOOST,
     ASSISTANT_VOICE_FACTOR,
     ASSISTANT_META_COMMENTARY_FACTOR,
+    ASSISTANT_RESTATEMENT_FACTOR,
     is_assistant_meta_commentary,
+    is_assistant_restatement,
+    get_nearby_user_texts,
     WINDOW_RETRIEVAL_MODES,
     TIMELINE_RETRIEVAL_MODE,
     CLI_RETRIEVAL_MODES,
@@ -260,6 +263,17 @@ def _rank_candidates(
     scorer = build_bm25_scorer(loaded_run, parsed_query.scoring_terms)
     query_token_set = set(parsed_query.scoring_terms)
 
+    # Lazy per-conversation index for restatement detection.
+    _conv_index_cache: dict[str, dict[str, int]] = {}
+
+    def _get_message_index(conv_id: str, msg_id: str) -> int | None:
+        if conv_id not in _conv_index_cache:
+            msgs = loaded_run.messages_by_conversation_id.get(conv_id, ())
+            _conv_index_cache[conv_id] = {
+                str(m.get("message_id", "")): idx for idx, m in enumerate(msgs)
+            }
+        return _conv_index_cache[conv_id].get(msg_id)
+
     for message_id, message in loaded_run.message_by_id.items():
         if not _message_matches_filters(message, filters):
             continue
@@ -295,6 +309,16 @@ def _rank_candidates(
         voice_factor = USER_VOICE_BOOST if author_role == "user" else ASSISTANT_VOICE_FACTOR
         if author_role == "assistant" and is_assistant_meta_commentary(string_or_none(message.get("text")) or ""):
             voice_factor *= ASSISTANT_META_COMMENTARY_FACTOR
+        if author_role == "assistant":
+            conv_id = string_or_none(message.get("conversation_id")) or ""
+            focal_idx = _get_message_index(conv_id, message_id)
+            if focal_idx is not None:
+                conv_msgs = loaded_run.messages_by_conversation_id.get(conv_id, ())
+                user_texts = get_nearby_user_texts(conv_msgs, focal_idx)
+                if user_texts and is_assistant_restatement(
+                    string_or_none(message.get("text")) or "", user_texts
+                ):
+                    voice_factor *= ASSISTANT_RESTATEMENT_FACTOR
         score = raw_score * voice_factor
 
         candidates.append(

@@ -25,7 +25,8 @@ What works:
 - [x] Deterministic query routing with 5 intent types (Phase 9)
 - [x] Entity-scoped query routing via ENTITY_SCOPED intent (Phase 10A)
 - [x] Entity-scoped narrative timeline filtering (Phase 10B)
-- [x] 384 tests passing
+- [x] Assistant restatement dedup via token-overlap downweighting (Phase 11)
+- [x] 406 tests passing
 
 What does not work:
 
@@ -79,18 +80,18 @@ assistant restatements should not overwhelm distinct, primary support."
 
 Prerequisite: none. Can run in parallel with Phase 10.
 
-- [ ] Audit real corpus for assistant messages that closely restate a user
-      message from the same conversation window
-- [ ] Define restatement detection: assistant message whose content overlaps
-      with a user message in the same window above a threshold (e.g., 60%
+- [x] Audit real corpus for assistant messages that closely restate a user
+      message from the same conversation window (207 restatements found)
+- [x] Define restatement detection: assistant message whose content overlaps
+      with a user message in the same window above a threshold (60%
       token overlap after lowercasing and stopword removal)
-- [ ] Add `is_assistant_restatement(assistant_text, user_texts)` helper in
+- [x] Add `is_assistant_restatement(assistant_text, user_texts)` helper in
       `src/rag/retrieval/types.py`
-- [ ] Apply in evidence ranking: multiply restatement score by 0.5 so they
+- [x] Apply in evidence ranking: multiply restatement score by 0.5 so they
       rank below the original user message
-- [ ] Add unit tests: restatement detected, non-restatement preserved,
+- [x] Add unit tests: restatement detected, non-restatement preserved,
       threshold boundary cases
-- [ ] Validate on real corpus: check that assistant restatements drop below
+- [x] Validate on real corpus: check that assistant restatements drop below
       the user original in rankings
 
 ---

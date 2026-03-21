@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import string
+
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
@@ -15,6 +17,9 @@ RECENCY_BOOST_MAX = 0.35
 USER_VOICE_BOOST = 1.25
 ASSISTANT_VOICE_FACTOR = 0.8
 ASSISTANT_META_COMMENTARY_FACTOR = 0.6
+ASSISTANT_RESTATEMENT_FACTOR = 0.5
+RESTATEMENT_OVERLAP_THRESHOLD = 0.60
+RESTATEMENT_WINDOW_RADIUS = 5
 
 # Opening phrases that signal assistant process text, reaction filler, or delivery mechanics.
 # Matching is case-insensitive against the first 80 characters of the message text.
@@ -64,6 +69,68 @@ def is_assistant_meta_commentary(text: str) -> bool:
         return False
     prefix = text[:80].lower().lstrip()
     return any(prefix.startswith(pattern) for pattern in ASSISTANT_META_PREFIXES)
+
+
+_RESTATEMENT_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "can",
+    "do", "does", "did", "for", "from", "had", "has", "have", "he", "her",
+    "him", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just",
+    "me", "my", "no", "not", "of", "on", "or", "our", "out", "she", "so",
+    "than", "that", "the", "their", "them", "then", "there", "they", "this",
+    "to", "too", "up", "us", "very", "was", "we", "were", "what", "when",
+    "where", "which", "who", "will", "with", "would", "you", "your",
+})
+
+_PUNCTUATION_TABLE = str.maketrans("", "", string.punctuation)
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Lowercase, strip punctuation, tokenize, remove stopwords."""
+    words = text.lower().translate(_PUNCTUATION_TABLE).split()
+    return {w for w in words if w and w not in _RESTATEMENT_STOPWORDS}
+
+
+def is_assistant_restatement(assistant_text: str, user_texts: list[str]) -> bool:
+    """Return True if *assistant_text* substantially overlaps any single user text.
+
+    Overlap is measured as the fraction of the assistant's content tokens that
+    also appear in a nearby user message.  If that fraction exceeds
+    ``RESTATEMENT_OVERLAP_THRESHOLD`` for any user text, the assistant message
+    is classified as a restatement.
+    """
+    assistant_tokens = _content_tokens(assistant_text)
+    if not assistant_tokens:
+        return False
+
+    for user_text in user_texts:
+        user_tokens = _content_tokens(user_text)
+        if not user_tokens:
+            continue
+        overlap = len(assistant_tokens & user_tokens)
+        ratio = overlap / len(assistant_tokens)
+        if ratio >= RESTATEMENT_OVERLAP_THRESHOLD:
+            return True
+
+    return False
+
+
+def get_nearby_user_texts(
+    ordered_messages: tuple[dict[str, object], ...],
+    focal_index: int,
+) -> list[str]:
+    """Return text of user-role messages within RESTATEMENT_WINDOW_RADIUS of *focal_index*."""
+    start = max(0, focal_index - RESTATEMENT_WINDOW_RADIUS)
+    end = min(len(ordered_messages), focal_index + RESTATEMENT_WINDOW_RADIUS + 1)
+    texts: list[str] = []
+    for i in range(start, end):
+        if i == focal_index:
+            continue
+        msg = ordered_messages[i]
+        if (msg.get("author_role") or "") == "user":
+            text = msg.get("text") or ""
+            if text:
+                texts.append(str(text))
+    return texts
 
 
 WINDOW_RETRIEVAL_MODES = ("relevance", "newest", "oldest", "relevance_recency")
