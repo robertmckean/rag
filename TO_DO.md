@@ -27,7 +27,9 @@ What works:
 - [x] Entity-scoped narrative timeline filtering (Phase 10B)
 - [x] Assistant restatement dedup via token-overlap downweighting (Phase 11)
 - [x] Role-aware phase descriptions and label entity selection (Phase 12A)
-- [x] 415 tests passing
+- [x] Role-aware narrative summary with user-grounding count (Phase 12B)
+- [x] Deterministic user-position extraction via stance markers (Phase 13A)
+- [x] 441 tests passing
 
 What does not work:
 
@@ -117,9 +119,9 @@ Prerequisite: Phase 11 (restatement dedup prevents double-counting).
 
 ### 12B: Role-aware narrative summary
 
-- [ ] In `_generate_summary`, count user-sourced vs assistant-sourced phases
-- [ ] Include "X of Y phases grounded in user content" in the summary string
-- [ ] Add test: summary reflects correct user/assistant ratio
+- [x] In `_generate_summary`, count user-sourced vs assistant-sourced phases
+- [x] Include "X of Y phases grounded in user content" in the summary string
+- [x] Add test: summary reflects correct user/assistant ratio
 
 ---
 
@@ -131,17 +133,17 @@ Prerequisite: Phase 10 (entity-scoped queries to focus on a topic).
 
 ### 13A: Position extraction (deterministic v1)
 
-- [ ] Define stance markers: "I think", "I believe", "I decided", "I realized",
+- [x] Define stance markers: "I think", "I believe", "I decided", "I realized",
       "I concluded", "my view is", "I was wrong about", "I changed my mind",
-      "I no longer", "I used to think"
-- [ ] Build `extract_positions(phase_description, role_filter="user")` that
+      "I no longer", "I used to think" (plus 8 naturalistic additions)
+- [x] Build `extract_positions(phase, role_filter="user")` that
       finds sentences containing stance markers in user-role segments only
-- [ ] Position model (frozen dataclass): `Position(text: str, date: str | None,
+- [x] Position model (frozen dataclass): `Position(text: str, date: str | None,
       entity: str | None, evidence_id: str, stance_marker: str)`
-- [ ] Add test: stance marker detected in user text
-- [ ] Add test: assistant text with same markers is excluded
-- [ ] Add test: no false positives on non-stance sentences
-- [ ] Add test: multiple positions extracted from one phase
+- [x] Add test: stance marker detected in user text
+- [x] Add test: assistant text with same markers is excluded
+- [x] Add test: no false positives on non-stance sentences
+- [x] Add test: multiple positions extracted from one phase
 
 ### 13B: Temporal comparison
 

@@ -530,5 +530,52 @@ class RoleAwareLabelTests(unittest.TestCase):
         self.assertTrue(all(l == labels[0] for l in labels))
 
 
+class RoleAwareSummaryTests(unittest.TestCase):
+    """Tests for role-aware narrative summary (Phase 12B)."""
+
+    def test_mixed_narrative_user_grounded_count(self) -> None:
+        """Summary should report correct user-grounded count for mixed phases."""
+        evidence = (
+            _make_evidence(1, "User message about Marc.", "2025-03-01", author_role="user"),
+            _make_evidence(2, "Assistant analysis.", "2025-03-15", author_role="assistant"),
+            _make_evidence(3, "Another user message.", "2025-04-01", author_role="user"),
+        )
+        narrative = build_narrative("test query", evidence, phase_window_days=7)
+        # 3 separate phases (>7 days apart): 2 user-grounded, 1 assistant-only.
+        self.assertIn("2 of 3 phase(s) grounded in user content", narrative.summary)
+
+    def test_all_user_grounded(self) -> None:
+        evidence = (
+            _make_evidence(1, "User one.", "2025-03-01", author_role="user"),
+            _make_evidence(2, "User two.", "2025-04-01", author_role="user"),
+        )
+        narrative = build_narrative("test query", evidence, phase_window_days=7)
+        self.assertIn("2 of 2 phase(s) grounded in user content", narrative.summary)
+
+    def test_all_assistant_only(self) -> None:
+        evidence = (
+            _make_evidence(1, "Assistant one.", "2025-03-01", author_role="assistant"),
+            _make_evidence(2, "Assistant two.", "2025-04-01", author_role="assistant"),
+        )
+        narrative = build_narrative("test query", evidence, phase_window_days=7)
+        self.assertIn("0 of 2 phase(s) grounded in user content", narrative.summary)
+
+    def test_empty_narrative_fallback(self) -> None:
+        narrative = build_narrative("test query", ())
+        self.assertEqual(narrative.summary, "No evidence was retrieved for this query.")
+        self.assertNotIn("grounded", narrative.summary)
+
+    def test_deterministic_summary(self) -> None:
+        evidence = (
+            _make_evidence(1, "User message.", "2025-03-01", author_role="user"),
+            _make_evidence(2, "Assistant message.", "2025-03-15", author_role="assistant"),
+        )
+        summaries = [
+            build_narrative("test", evidence, phase_window_days=7).summary
+            for _ in range(5)
+        ]
+        self.assertTrue(all(s == summaries[0] for s in summaries))
+
+
 if __name__ == "__main__":
     unittest.main()

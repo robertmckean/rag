@@ -13,7 +13,7 @@ retrieved evidence, and extracts recurring-entity patterns across narratives.
 
 ## Project Status
 
-- Active milestone: Phase 12B role-aware narrative summary (see TO_DO.md)
+- Active milestone: Phase 13B temporal position comparison (see TO_DO.md)
 - Phase 1 normalization is complete and its output contract is frozen
 - Phase 2 currently supports BM25 lexical retrieval, semantic retrieval over
   run-local message embeddings, hybrid retrieval, contextual window results,

@@ -591,6 +591,10 @@ def _generate_summary(
     else:
         parts.append(f"The evidence covers {len(phases)} phase(s) without clear date markers.")
 
+    # Role-grounding statement.
+    user_grounded = sum(1 for p in phases if "[user]" in p.description)
+    parts.append(f"{user_grounded} of {len(phases)} phase(s) grounded in user content.")
+
     # Phase summaries (one sentence each, up to 4).
     for phase in phases[:4]:
         n_items = len(phase.evidence_ids)
