@@ -30,7 +30,9 @@ What works:
 - [x] Role-aware narrative summary with user-grounding count (Phase 12B)
 - [x] Deterministic user-position extraction via stance markers (Phase 13A)
 - [x] Temporal position comparison with shift detection heuristics (Phase 13B)
-- [x] 462 tests passing
+- [x] Evolution query routing with honest fallback behavior (Phase 13C)
+- [x] Contradiction/change signal detection via deterministic heuristics (Phase 14A)
+- [x] 494 tests passing
 
 What does not work:
 
@@ -159,11 +161,11 @@ Prerequisite: Phase 10 (entity-scoped queries to focus on a topic).
 
 ### 13C: Router integration
 
-- [ ] Add EVOLUTION intent to router (keywords: "evolve", "evolved",
-      "thinking", "path", "journey", "develop", "developed", "grew")
-- [ ] Wire evolution extraction into answer formatting
-- [ ] Validate on real corpus: `--answer "how did my thinking about Marc change"`
-- [ ] Assess: does the output show real progression or just restated data?
+- [x] Add EVOLUTION intent to router (keywords: "evolve", "evolved",
+      "thinking", "path", "journey", "develop", "developed", "progression")
+- [x] Wire evolution extraction into answer formatting
+- [x] Validate on real corpus: `--answer "how did my thinking about Marc change"`
+- [x] Assess: does the output show real progression or just restated data?
 
 ---
 
@@ -175,19 +177,19 @@ Prerequisite: Phase 13A (position extraction).
 
 ### 14A: Contradiction signals (deterministic v1)
 
-- [ ] Define contradiction heuristics:
+- [x] Define contradiction heuristics:
       - Explicit self-correction: "I was wrong", "I changed my mind",
         "I no longer think"
       - Opposing stance markers on same entity across time:
         "I trust X" → "I don't trust X"
       - Sentiment reversal: positive stance terms → negative stance terms
         for same entity
-- [ ] Build `detect_contradictions(positions: list[Position]) -> list[Contradiction]`
-- [ ] Contradiction model (frozen dataclass): `Contradiction(entity: str,
+- [x] Build `detect_contradictions(entity, positions) -> list[Contradiction]`
+- [x] Contradiction model (frozen dataclass): `Contradiction(entity: str,
       earlier: Position, later: Position, signal: str, date_range: str)`
-- [ ] Add test: explicit self-correction detected
-- [ ] Add test: stable repetition not flagged as contradiction
-- [ ] Add test: different topics for same entity not conflated
+- [x] Add test: explicit self-correction detected
+- [x] Add test: stable repetition not flagged as contradiction
+- [x] Add test: different topics for same entity not conflated
 
 ### 14B: Change classification
 

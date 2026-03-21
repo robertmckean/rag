@@ -369,3 +369,78 @@ def collect_positions_for_entity(
         if pattern.search(p.text)
     )
     return text_matches
+
+
+# ---------------------------------------------------------------------------
+# Phase 14A — Contradiction / change signal detection
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Contradiction:
+    """A detected contradiction or change signal between two positions."""
+
+    entity: str           # target entity or topic
+    earlier: Position     # chronologically earlier position
+    later: Position       # chronologically later position
+    signal: str           # deterministic reason string
+    date_range: str       # concise range, e.g. "2025-03-01 to 2025-06-01"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "entity": self.entity,
+            "earlier": self.earlier.to_dict(),
+            "later": self.later.to_dict(),
+            "signal": self.signal,
+            "date_range": self.date_range,
+        }
+
+
+def _date_range_str(earlier: Position, later: Position) -> str:
+    """Build a concise date range string from two positions."""
+    e = earlier.date[:10] if earlier.date else "undated"
+    l = later.date[:10] if later.date else "undated"
+    if e == l:
+        return e
+    return f"{e} to {l}"
+
+
+def detect_contradictions(
+    entity: str,
+    positions: list[Position] | tuple[Position, ...],
+) -> list[Contradiction]:
+    """Detect contradiction/change signals between adjacent chronological positions.
+
+    Uses the same three heuristics as ``_detect_shift``:
+    1. Explicit self-revision markers in the later position.
+    2. Negation introduced or removed between positions.
+    3. Sentiment-bearing term reversal (positive ↔ negative).
+
+    Parameters
+    ----------
+    entity : str
+        The entity or topic being compared.
+    positions : list or tuple of Position
+        Positions to compare (will be sorted chronologically).
+
+    Returns
+    -------
+    list[Contradiction]
+        Detected signals, ordered chronologically.  Empty if no signals found.
+    """
+    sorted_positions = sorted(positions, key=_sort_key)
+
+    contradictions: list[Contradiction] = []
+    for i in range(len(sorted_positions) - 1):
+        earlier = sorted_positions[i]
+        later = sorted_positions[i + 1]
+        signal = _detect_shift(earlier, later)
+        if signal:
+            contradictions.append(Contradiction(
+                entity=entity,
+                earlier=earlier,
+                later=later,
+                signal=signal,
+                date_range=_date_range_str(earlier, later),
+            ))
+
+    return contradictions

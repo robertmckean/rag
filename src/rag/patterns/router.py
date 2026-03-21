@@ -13,10 +13,17 @@ import string
 from enum import Enum
 
 from rag.narrative.models import NarrativePhase, NarrativeReconstruction, NarrativeTransition
+from rag.narrative.positions import (
+    ThinkingEvolution,
+    build_thinking_evolution,
+    collect_positions_for_entity,
+    extract_positions,
+)
 from rag.patterns.models import PatternReport
 
 
 class Intent(Enum):
+    EVOLUTION = "evolution"
     ENTITY_SCOPED = "entity_scoped"
     ENTITY = "entity"
     THEME = "theme"
@@ -52,6 +59,19 @@ _INTENT_KEYWORDS: list[tuple[Intent, frozenset[str]]] = [
         "transitions", "progress", "progression",
     })),
 ]
+
+
+# Evolution keywords — any of these alongside an entity triggers EVOLUTION.
+_EVOLUTION_KEYWORDS: frozenset[str] = frozenset({
+    "evolve", "evolved", "thinking", "change", "changed",
+    "path", "journey", "develop", "developed", "progression",
+})
+
+# Strong evolution keywords — these trigger EVOLUTION even without an entity.
+_EVOLUTION_STRONG_KEYWORDS: frozenset[str] = frozenset({
+    "thinking", "journey", "path", "progression",
+    "develop", "developed", "evolve", "evolved",
+})
 
 
 # Question words that suggest the user is asking about a specific entity.
@@ -100,15 +120,28 @@ def classify_intent(
     wins before keyword scoring.
     """
     tokens = set(query.lower().split())
+    stripped_tokens = set(_normalize_query(query).split())
 
-    # Check ENTITY_SCOPED before keyword scoring.
+    # Check EVOLUTION before ENTITY_SCOPED — evolution queries take priority.
     if report is not None:
         entity = _detect_entity(query, report)
+        has_evolution = bool(stripped_tokens & _EVOLUTION_KEYWORDS)
+        has_strong_evolution = bool(stripped_tokens & _EVOLUTION_STRONG_KEYWORDS)
+
+        if entity is not None and has_evolution:
+            return Intent.EVOLUTION
+        if has_strong_evolution:
+            return Intent.EVOLUTION
+
+        # Check ENTITY_SCOPED: entity + question word, no evolution signal.
         if entity is not None:
-            # Require at least one question-pattern word alongside the entity.
-            stripped_tokens = set(_normalize_query(query).split())
             if stripped_tokens & _ENTITY_SCOPED_QUESTION_WORDS:
                 return Intent.ENTITY_SCOPED
+    else:
+        # No report — still check for strong evolution keywords.
+        has_strong_evolution = bool(stripped_tokens & _EVOLUTION_STRONG_KEYWORDS)
+        if has_strong_evolution:
+            return Intent.EVOLUTION
 
     best_intent = Intent.UNKNOWN
     best_score = 0
@@ -130,6 +163,9 @@ def route_answer(
     """Route a user question to the appropriate data and produce an answer."""
     intent = classify_intent(query, report)
 
+    if intent == Intent.EVOLUTION:
+        entity = _detect_entity(query, report)
+        return _answer_evolution(entity, query, narratives)
     if intent == Intent.ENTITY_SCOPED:
         entity = _detect_entity(query, report)
         assert entity is not None  # guaranteed by classify_intent
@@ -197,6 +233,65 @@ def _filter_narrative_for_entity(
             ))
 
     return tuple(all_phases), tuple(scoped_transitions)
+
+
+def _answer_evolution(
+    entity_name: str | None,
+    query: str,
+    narratives: list[NarrativeReconstruction],
+) -> str:
+    """Produce an evolution answer from extracted positions."""
+    # Collect positions from all narrative phases.
+    all_positions = []
+    for narr in narratives:
+        for phase in narr.timeline:
+            all_positions.extend(extract_positions(phase))
+
+    # Scope to entity when present.
+    label = entity_name or query
+    if entity_name:
+        scoped = collect_positions_for_entity(tuple(all_positions), entity_name)
+    else:
+        scoped = tuple(all_positions)
+
+    evo = build_thinking_evolution(label, scoped)
+
+    lines = [f"Thinking evolution: {label}", ""]
+
+    # Case A: fewer than 2 positions.
+    if len(evo.positions) < 2:
+        lines.append("  Insufficient evidence to determine evolution.")
+        if evo.positions:
+            lines.append("")
+            lines.append("  Extracted position(s):")
+            for p in evo.positions:
+                date_part = f"[{p.date}] " if p.date else ""
+                lines.append(f"    - {date_part}({p.stance_marker}) {p.text}")
+        return "\n".join(lines)
+
+    # Case B: 2+ positions, no shifts.
+    if not evo.shifts:
+        lines.append("  Position appears stable over time.")
+        lines.append("")
+        lines.append(f"  Positions ({len(evo.positions)}):")
+        for p in evo.positions:
+            date_part = f"[{p.date}] " if p.date else ""
+            lines.append(f"    - {date_part}({p.stance_marker}) {p.text}")
+        return "\n".join(lines)
+
+    # Case C: 2+ positions with shifts.
+    lines.append("  Possible evolution detected.")
+    lines.append("")
+    lines.append(f"  Positions ({len(evo.positions)}):")
+    for p in evo.positions:
+        date_part = f"[{p.date}] " if p.date else ""
+        lines.append(f"    - {date_part}({p.stance_marker}) {p.text}")
+    lines.append("")
+    lines.append(f"  Shifts ({len(evo.shifts)}):")
+    for s in evo.shifts:
+        lines.append(f"    - {s}")
+
+    return "\n".join(lines)
 
 
 def _answer_entity_scoped(
@@ -399,6 +494,7 @@ def _answer_unknown(report: PatternReport) -> str:
         "",
         "  - Who are the main people? (entity-focused)",
         "  - What happened with [name]? (entity-scoped)",
+        "  - How did my thinking about [name] change? (evolution)",
         "  - What are the main themes? (theme-focused)",
         "  - Who connects multiple topics? (cross-topic)",
         "  - When were things most active? (temporal intensity)",

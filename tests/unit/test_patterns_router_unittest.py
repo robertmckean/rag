@@ -152,7 +152,7 @@ class IntentClassificationTests(unittest.TestCase):
         self.assertEqual(classify_intent("what changed over time"), Intent.TIMELINE)
 
     def test_timeline_variant(self) -> None:
-        self.assertEqual(classify_intent("how did things evolve"), Intent.TIMELINE)
+        self.assertEqual(classify_intent("how did things evolve"), Intent.EVOLUTION)
 
     def test_unknown_intent(self) -> None:
         self.assertEqual(classify_intent("tell me a joke"), Intent.UNKNOWN)
@@ -618,6 +618,181 @@ class ScopedTimelineAnswerTests(unittest.TestCase):
         report = _populated_report()
         narr = _multi_phase_narrative()
         answers = [route_answer("what happened with Marc", report, [narr]) for _ in range(5)]
+        self.assertTrue(all(a == answers[0] for a in answers))
+
+
+def _evolution_narrative() -> NarrativeReconstruction:
+    """Narrative with user stance markers for evolution testing."""
+    phase1 = NarrativePhase(
+        label="2025-03-01: Marc",
+        description='(2025-03-01) [user] "I think Marc is trustworthy and great"',
+        evidence_ids=("e1",),
+        date_range="2025-03-01",
+        support="supported",
+    )
+    phase2 = NarrativePhase(
+        label="2025-06-01: Marc",
+        description='(2025-06-01) [user] "I don\'t think Marc is honest anymore"',
+        evidence_ids=("e2",),
+        date_range="2025-06-01",
+        support="supported",
+    )
+    phase3 = NarrativePhase(
+        label="2025-09-01: Craig",
+        description='(2025-09-01) [user] "I believe Craig means well"',
+        evidence_ids=("e3",),
+        date_range="2025-09-01",
+        support="supported",
+    )
+    return NarrativeReconstruction(
+        query="Marc",
+        summary="Test evolution narrative.",
+        timeline=(phase1, phase2, phase3),
+        transitions=(),
+        gaps=(),
+        limitations=(),
+        evidence_count=3,
+    )
+
+
+def _sparse_narrative() -> NarrativeReconstruction:
+    """Narrative with only one user stance marker."""
+    phase = NarrativePhase(
+        label="2025-03-01: Marc",
+        description='(2025-03-01) [user] "I think Marc is fine"',
+        evidence_ids=("e1",),
+        date_range="2025-03-01",
+        support="supported",
+    )
+    return NarrativeReconstruction(
+        query="Marc",
+        summary="Sparse narrative.",
+        timeline=(phase,),
+        transitions=(),
+        gaps=(),
+        limitations=(),
+        evidence_count=1,
+    )
+
+
+def _stable_narrative() -> NarrativeReconstruction:
+    """Narrative with multiple user stances but no shifts."""
+    phase1 = NarrativePhase(
+        label="2025-03-01: Marc",
+        description='(2025-03-01) [user] "I think Marc is a good friend"',
+        evidence_ids=("e1",),
+        date_range="2025-03-01",
+        support="supported",
+    )
+    phase2 = NarrativePhase(
+        label="2025-06-01: Marc",
+        description='(2025-06-01) [user] "I believe Marc is trustworthy"',
+        evidence_ids=("e2",),
+        date_range="2025-06-01",
+        support="supported",
+    )
+    return NarrativeReconstruction(
+        query="Marc",
+        summary="Stable narrative.",
+        timeline=(phase1, phase2),
+        transitions=(),
+        gaps=(),
+        limitations=(),
+        evidence_count=2,
+    )
+
+
+class EvolutionIntentTests(unittest.TestCase):
+    """Tests for EVOLUTION intent classification."""
+
+    def test_entity_plus_evolution_keyword(self) -> None:
+        report = _populated_report()
+        intent = classify_intent("how did my thinking about Marc change", report)
+        self.assertEqual(intent, Intent.EVOLUTION)
+
+    def test_evolve_keyword_with_entity(self) -> None:
+        report = _populated_report()
+        intent = classify_intent("how did Marc evolve", report)
+        self.assertEqual(intent, Intent.EVOLUTION)
+
+    def test_strong_keyword_without_entity(self) -> None:
+        intent = classify_intent("how did my thinking change")
+        self.assertEqual(intent, Intent.EVOLUTION)
+
+    def test_journey_keyword(self) -> None:
+        intent = classify_intent("what was my journey")
+        self.assertEqual(intent, Intent.EVOLUTION)
+
+    def test_entity_without_evolution_stays_scoped(self) -> None:
+        report = _populated_report()
+        intent = classify_intent("what happened with Marc", report)
+        self.assertEqual(intent, Intent.ENTITY_SCOPED)
+
+    def test_change_without_entity_falls_to_timeline(self) -> None:
+        """'change' alone is not a strong evolution keyword."""
+        intent = classify_intent("what changed over time")
+        self.assertNotEqual(intent, Intent.EVOLUTION)
+
+    def test_deterministic(self) -> None:
+        report = _populated_report()
+        results = [classify_intent("how did my thinking about Marc change", report)
+                    for _ in range(5)]
+        self.assertTrue(all(r == results[0] for r in results))
+
+
+class EvolutionAnswerTests(unittest.TestCase):
+    """Tests for evolution answer formatting."""
+
+    def test_sparse_fallback(self) -> None:
+        """Fewer than 2 positions shows insufficient evidence."""
+        report = _populated_report()
+        narr = _sparse_narrative()
+        answer = route_answer("how did my thinking about Marc evolve", report, [narr])
+        self.assertIn("Insufficient evidence", answer)
+        self.assertIn("i think", answer)
+
+    def test_stable_positions(self) -> None:
+        """2+ positions with no shifts shows stable."""
+        report = _populated_report()
+        narr = _stable_narrative()
+        answer = route_answer("how did my thinking about Marc evolve", report, [narr])
+        self.assertIn("stable over time", answer)
+        self.assertNotIn("Possible evolution", answer)
+
+    def test_shift_detected(self) -> None:
+        """Positions with negation change shows evolution."""
+        report = _populated_report()
+        narr = _evolution_narrative()
+        answer = route_answer("how did my thinking about Marc evolve", report, [narr])
+        self.assertIn("Possible evolution detected", answer)
+        self.assertIn("Shifts", answer)
+
+    def test_entity_scoped_positions(self) -> None:
+        """Entity filter excludes unrelated positions."""
+        report = _populated_report()
+        narr = _evolution_narrative()
+        answer = route_answer("how did my thinking about Marc evolve", report, [narr])
+        # Craig position should not appear.
+        self.assertNotIn("Craig means well", answer)
+
+    def test_topic_level_fallback(self) -> None:
+        """No entity uses all positions."""
+        report = _empty_report()
+        narr = _evolution_narrative()
+        answer = route_answer("how did my thinking evolve", report, [narr])
+        self.assertIn("Thinking evolution", answer)
+
+    def test_no_narrative_data(self) -> None:
+        report = _populated_report()
+        narr = _make_narrative()  # no stance markers in description
+        answer = route_answer("how did my thinking about Marc evolve", report, [narr])
+        self.assertIn("Insufficient evidence", answer)
+
+    def test_deterministic_output(self) -> None:
+        report = _populated_report()
+        narr = _evolution_narrative()
+        answers = [route_answer("how did my thinking about Marc evolve", report, [narr])
+                   for _ in range(5)]
         self.assertTrue(all(a == answers[0] for a in answers))
 
 
