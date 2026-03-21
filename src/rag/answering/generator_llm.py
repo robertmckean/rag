@@ -214,7 +214,10 @@ def _contains_unseen_surface_forms(answer_text: str, request: LLMSynthesisReques
 def _entity_surface_forms_permissive(value: str) -> set[str]:
     surfaces: set[str] = set()
     for match in re.finditer(r"\b[A-Z][A-Za-z']+\b", value):
-        surfaces.add(match.group(0))
+        token = match.group(0)
+        surfaces.add(token)
+        if token.endswith("'s"):
+            surfaces.add(token[:-2])
     return surfaces
 
 

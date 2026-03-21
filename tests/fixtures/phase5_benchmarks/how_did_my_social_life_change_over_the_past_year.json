@@ -1,0 +1,61 @@
+{
+  "query": "how did my social life change over the past year",
+  "answer_status": "partially_supported",
+  "evidence_count": 3,
+  "results": [
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:690da879-ec30-832d-99c7-f4440440651d",
+      "conversation_title": "Self-Validation and Identity",
+      "focal_message_id": "chatgpt:message:bce083b4-0988-435a-9826-43603940a98c",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-11-07T09:39:44.168493Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "I was living at his villa with several other guys. He held a social circle. I moved out almost a year ago and traveled the world. When I returned to Thailand, I thought I would ..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:00fa8809-959a-4398-8652-41a9435247f7",
+      "conversation_title": "Clarifying Values and Purpose for Personal Growth",
+      "focal_message_id": "claude:message:abdba090-ac18-4e59-b1b3-3d7da7fec96e",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-02-23T04:00:10.639266Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "I compare potential partners to her, although I don’t ‘idealize’ her. But if you put a gun to my head and said you have to pick one girl to live with for the rest of your life, ..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:68733989-d800-8012-907b-73b5ed77a6e9",
+      "conversation_title": "Response to Interest Reconnection",
+      "focal_message_id": "chatgpt:message:dd0d1bbf-80ce-4c99-bf61-432249ce06cf",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-07-18T18:04:00.406115Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Look, I’m just trying to live my life the best I know how. I don’t have an agenda, and if I do something or I don’t do something, sometimes it’s just because that’s what I did, ..."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

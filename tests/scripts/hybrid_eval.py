@@ -25,7 +25,7 @@ from rag.answering.status import classify_answer_status, generate_answer_text
 
 def _load_evidence(data: dict) -> tuple[EvidenceItem, ...]:
     items: list[EvidenceItem] = []
-    for i, r in enumerate(data["results"][:4]):
+    for i, r in enumerate(data["results"][:5]):
         messages = r.get("messages", [])
         focal_msg = None
         for msg in messages:
@@ -97,6 +97,8 @@ def main() -> None:
 
         query = data["query"]
         evidence = _load_evidence(data)
+        fixture_status_str = data.get("answer_status", "supported")
+        fixture_status = AnswerStatus(fixture_status_str) if fixture_status_str in {s.value for s in AnswerStatus} else AnswerStatus.SUPPORTED
         total += 1
 
         # Deterministic path
@@ -106,7 +108,7 @@ def main() -> None:
         # Hybrid path
         request = LLMSynthesisRequest(
             query=query,
-            answer_status=AnswerStatus.SUPPORTED,
+            answer_status=fixture_status,
             evidence_items=evidence,
             gaps=(),
             conflicts=(),
@@ -128,7 +130,7 @@ def main() -> None:
                 citation_ids=hybrid_citations,
                 query=query,
                 evidence_items=evidence,
-                answer_status=AnswerStatus.SUPPORTED,
+                answer_status=fixture_status,
             )
             classification = validation.classification
         except Exception:

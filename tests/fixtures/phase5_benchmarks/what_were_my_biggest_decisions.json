@@ -1,0 +1,79 @@
+{
+  "query": "what were my biggest decisions",
+  "answer_status": "partially_supported",
+  "evidence_count": 4,
+  "results": [
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:6999c7db-ccc0-832e-a09c-882701824b78",
+      "conversation_title": "CV Rewrite and Positioning",
+      "focal_message_id": "chatgpt:message:62a6e764-eff8-4950-95d5-355a3cc30c43",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2026-02-22T03:36:00.900000Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "My biggest worry is my inability to articulate \"CEO speak\" in real time. In each question, my answers have been good, but my CEO speak has been lacking."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:68b00671-19f0-832e-9606-d0b54afaba89",
+      "conversation_title": "Lease vs rent pros cons",
+      "focal_message_id": "chatgpt:message:93f76d86-4972-4d1b-b54e-1f274b70f3b9",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-09-04T06:03:29.109528Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "This also set me up for return trips to China. I will arrive there with an act already. I know my girlfriend loves when I play, so she will be my biggest supporter."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:dc4f2064-df8d-4359-924f-c770212cea57",
+      "conversation_title": "Making it work with Mecky and Faye Faye",
+      "focal_message_id": "claude:message:019c1c51-4b4a-7de1-8531-78fc29dd4b27",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2026-02-02T03:06:56.630317Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "The biggest roadblock is that, for the first time in my life, I have the space and time that I crave to create and work on my music. I’m enjoying this life. That is in addition ..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:68b00671-19f0-832e-9606-d0b54afaba89",
+      "conversation_title": "Lease vs rent pros cons",
+      "focal_message_id": "chatgpt:message:c1b0b50d-28bc-44dc-aaf9-f8fe58cad87a",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-09-10T06:42:13.851643Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Give me one more devils advocate on this one: Give me a detailed devil’s option about selecting the pool villa instead. My biggest concerns about it… The cost. Breaking the leas..."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

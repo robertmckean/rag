@@ -1,0 +1,61 @@
+{
+  "query": "what projects was I working on",
+  "answer_status": "supported",
+  "evidence_count": 3,
+  "results": [
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:1f4c54c0-b667-4ebc-94fd-c94c25eb9c00",
+      "conversation_title": "Navigating Flirtation with Real Estate Agent",
+      "focal_message_id": "claude:message:d9c3cdef-3654-42eb-b46f-08d1cd276c0b",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-02-15T16:42:20.622514Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Also, I looked up to Marc. Marc, Craig, and I had discussed the possibility of marc and I working together on some China/AI projects in the future. I liked marc. There were neve..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:68733989-d800-8012-907b-73b5ed77a6e9",
+      "conversation_title": "Response to Interest Reconnection",
+      "focal_message_id": "chatgpt:message:8e48efd9-eb0f-4864-bbc1-14db298461c1",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-07-23T03:33:11.305693Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Personal growth and learning our core values for me. I just stopped working. And I was working nearly the entire time I was at the villa. So I had 40 hours less per week to play..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:6b3bc5f2-c90e-45fb-a004-72c36d4aaa2c",
+      "conversation_title": "Closing chapters through meaningful apologies",
+      "focal_message_id": "claude:message:019cad2a-abe7-7aaa-8df1-7aad8c05ed81",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2026-03-02T06:09:41.142918Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Oh... I'll need to update. I told a mutual friend about TinTin and he told michel. We ended up having lunch together and he invited me to his house to show me some projects he w..."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "query": "what did I learn about myself",
+  "answer_status": "supported",
+  "evidence_count": 3,
+  "results": [
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:6943b4a9-07d0-832b-8877-8de4fd546cf3",
+      "conversation_title": "Meditation for integration",
+      "focal_message_id": "chatgpt:message:3ff5694e-3ad7-45b5-8d50-0b596a870635",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-12-18T08:19:58.194441Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Yes, I clearly and honestly have zero compunction about any of the things that I did to extract myself from the villa. And I have zero pains of regret about leaving, keeping my ..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:f05e1cac-360c-4f83-9434-e5e7c6ad92cc",
+      "conversation_title": "Jung's archetypes and their meanings",
+      "focal_message_id": "claude:message:019aa6ff-c84f-763b-b918-2e1c08ed06e5",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-11-21T15:19:32.185729Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Even if I question what I should’ve/could’ve done differently, it’s main value is to learn lessons for the future. So I’m not always questioning myself based upon their being so..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:9740758e-50ef-49c9-90e5-ac2c2de22e0c",
+      "conversation_title": "Continuing shadow work exploration",
+      "focal_message_id": "claude:message:46fcb8c2-4594-4e8e-a28a-9965ffd45366",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-11-04T09:20:42.849244Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "I’m doing my shadow work. I can talk to myself and my younger years. But I don’t know how to process bad things I did. For instance, I let my grandmother down by not showing up...."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

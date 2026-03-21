@@ -1,0 +1,79 @@
+{
+  "query": "what did I discuss about AI",
+  "answer_status": "supported",
+  "evidence_count": 4,
+  "results": [
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:69a40bdc-5e5c-832c-9aaf-6c24954d0247",
+      "conversation_title": "AI Video Creative Ideas",
+      "focal_message_id": "chatgpt:message:9bb4e087-4596-4a0f-bd26-28e12319eafa",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2026-03-01T09:52:08.604000Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "not now, but let's discuss. When I finish \"My Oh My\" i'd like to do a video related to the content, but really cool. I want to use AI, but I also want to mix it with iPhone vide..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:86d24f72-6347-4acb-b2f1-385e5dcb7d19",
+      "conversation_title": "Mastering AI Tools and Techniques in Jupyter Notebook",
+      "focal_message_id": "claude:message:7270644f-f0c3-458a-b4ae-f3e208f36865",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-02-25T04:25:33.950562Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "I am working on an AI project. We will discuss in a separate chat. I have a 'no zero day' policy - i need to learn something new about AI and the tools each day. I use Jupyter N..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:69a3e9e8-5ab0-8328-8c8a-b64a4a0435a8",
+      "conversation_title": "Beatles vs Solo Productivity",
+      "focal_message_id": "chatgpt:message:2e179d07-ca9e-4372-aa8b-505e1fc75791",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2026-03-01T11:48:53.354644Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Plus a lot of it is coming from musicians sensing that AI had something to do with us. Being a musician, I understand how musicians can feel threatened by AI. There are already ..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:1f4c54c0-b667-4ebc-94fd-c94c25eb9c00",
+      "conversation_title": "Navigating Flirtation with Real Estate Agent",
+      "focal_message_id": "claude:message:38c25658-172c-4f90-b23b-eb4ce6d71f2a",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-02-10T09:17:19.185119Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "I'm less concerned about my musical needs and more concerned about my AI projects. I am not a young man, but I have a good idea and a project that excites me. Also, I just did s..."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

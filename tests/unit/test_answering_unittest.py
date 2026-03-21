@@ -586,6 +586,16 @@ class AnsweringTests(unittest.TestCase):
         self.assertIn("Cambodia", entities)
         self.assertIn("Craig", entities)
 
+    # Verify that permissive extraction includes possessive-stripped base forms.
+    def test_permissive_entity_extraction_strips_possessives(self) -> None:
+        text = "Siem Reap's temple environments and Marc's profile."
+        entities = _entity_surface_forms_permissive(text)
+        self.assertIn("Reap's", entities)
+        self.assertIn("Reap", entities)
+        self.assertIn("Marc's", entities)
+        self.assertIn("Marc", entities)
+        self.assertIn("Siem", entities)
+
     # Verify that possessive forms are normalized in strict extraction.
     def test_strict_entity_extraction_normalizes_possessives(self) -> None:
         text = "This is about Marc's profile and Craig's meeting."

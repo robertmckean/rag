@@ -1,0 +1,79 @@
+{
+  "query": "how did I feel about living in Thailand",
+  "answer_status": "supported",
+  "evidence_count": 4,
+  "results": [
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:68a6b146-2b2c-832e-a773-8f5870c45244",
+      "conversation_title": "Social Security abroad tips",
+      "focal_message_id": "chatgpt:message:e8909c12-e1af-4584-82c9-cf2efbcb6528",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-08-21T05:40:21.716327Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "I will turn 65 in January. But I am living in Thailand on a retirement visa. What should I do about Social Security?"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:e004bcb0-68de-45da-87c8-08076c1a4c25",
+      "conversation_title": "Seeking validation from women",
+      "focal_message_id": "claude:message:019a5ee4-bc35-745b-b14b-55089eb56c1e",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-11-07T15:17:20.060873Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "That feels like where I am. Put in general, I still feel like I am needy in front of other people. I haven’t had a chance to practice living life in this new understanding that ..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:1f66e78a-273f-4873-9f56-5745d87c4147",
+      "conversation_title": "💬 When I left the villa and star…",
+      "focal_message_id": "claude:message:019b071c-ecf4-700a-bc66-079c84589143",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-12-10T07:14:54.981529Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Honestly, I see pushing her to come to Thailand is putting a placeholder in our relationship and to let her know that we still have a chance for a real ongoing relationship. And..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:1f66e78a-273f-4873-9f56-5745d87c4147",
+      "conversation_title": "💬 When I left the villa and star…",
+      "focal_message_id": "claude:message:019b071c-ecf4-700a-bc66-079d24f9abd4",
+      "messages": [
+        {
+          "author_role": "assistant",
+          "created_at": "2025-12-10T07:15:26.985784Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "**That's completely clear and reasonable.** You're not avoiding, not testing, not staying in quantum superposition. You're: - **Actively engaging** (pushing for the Thailand vis..."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "query": "what did I think about meditation",
+  "answer_status": "supported",
+  "evidence_count": 3,
+  "results": [
+    {
+      "provider": "chatgpt",
+      "conversation_id": "chatgpt:conversation:6943b4a9-07d0-832b-8877-8de4fd546cf3",
+      "conversation_title": "Meditation for integration",
+      "focal_message_id": "chatgpt:message:caac2225-b603-413e-ad2d-52dc1db1ac1b",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-12-18T08:01:37.925259Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Meditation advice… Given the shadow work that I’ve been doing in the progress I’ve made, what are some things that I should be bubbling up during meditation? Answer me like a se..."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:61acb294-9b4e-4980-b8b0-37309dce4aba",
+      "conversation_title": "Resetting in Siem Reap After Phuket Partying",
+      "focal_message_id": "claude:message:dd6480b1-94ac-4ebc-8468-39792bf8d55d",
+      "messages": [
+        {
+          "author_role": "user",
+          "created_at": "2025-02-20T03:27:54.195025Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "What are some good methods for walking meditation?"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "conversation_id": "claude:conversation:61acb294-9b4e-4980-b8b0-37309dce4aba",
+      "conversation_title": "Resetting in Siem Reap After Phuket Partying",
+      "focal_message_id": "claude:message:49036901-0916-4b2c-ab8b-1f2834465a90",
+      "messages": [
+        {
+          "author_role": "assistant",
+          "created_at": "2025-02-20T03:28:04.196290Z",
+          "content_blocks": [
+            {
+              "type": "text",
+              "text": "Let me break down a few walking meditation approaches that might resonate with your analytical mind, particularly well-suited to Siem Reap's temple environments: 1. The Awarenes..."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
