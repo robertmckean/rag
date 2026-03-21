@@ -14,15 +14,18 @@ from enum import Enum
 
 from rag.narrative.models import NarrativePhase, NarrativeReconstruction, NarrativeTransition
 from rag.narrative.positions import (
+    Contradiction,
     ThinkingEvolution,
     build_thinking_evolution,
     collect_positions_for_entity,
+    detect_contradictions,
     extract_positions,
 )
 from rag.patterns.models import PatternReport
 
 
 class Intent(Enum):
+    CONTRADICTION = "contradiction"
     EVOLUTION = "evolution"
     ENTITY_SCOPED = "entity_scoped"
     ENTITY = "entity"
@@ -74,6 +77,23 @@ _EVOLUTION_STRONG_KEYWORDS: frozenset[str] = frozenset({
 })
 
 
+# Contradiction/change keywords — these trigger CONTRADICTION when present.
+_CONTRADICTION_KEYWORDS: frozenset[str] = frozenset({
+    "contradict", "contradiction", "contradicted",
+    "reverse", "reversed", "reversal",
+    "soften", "softened", "softening",
+    "strengthen", "strengthened", "strengthening",
+    "grew", "grow", "growth", "clearer",
+})
+
+# Phrase-level contradiction triggers checked against normalized query.
+_CONTRADICTION_PHRASES: tuple[str, ...] = (
+    "changed my mind",
+    "change my mind",
+    "become clearer",
+)
+
+
 # Question words that suggest the user is asking about a specific entity.
 _ENTITY_SCOPED_QUESTION_WORDS: frozenset[str] = frozenset({
     "what", "how", "when", "timeline", "happened", "with",
@@ -121,6 +141,16 @@ def classify_intent(
     """
     tokens = set(query.lower().split())
     stripped_tokens = set(_normalize_query(query).split())
+    normalized_query = _normalize_query(query)
+
+    # Check for contradiction keywords/phrases.
+    has_contradiction = bool(stripped_tokens & _CONTRADICTION_KEYWORDS) or any(
+        p in normalized_query for p in _CONTRADICTION_PHRASES
+    )
+
+    # CONTRADICTION takes priority over EVOLUTION when explicit.
+    if has_contradiction:
+        return Intent.CONTRADICTION
 
     # Check EVOLUTION before ENTITY_SCOPED — evolution queries take priority.
     if report is not None:
@@ -163,6 +193,9 @@ def route_answer(
     """Route a user question to the appropriate data and produce an answer."""
     intent = classify_intent(query, report)
 
+    if intent == Intent.CONTRADICTION:
+        entity = _detect_entity(query, report)
+        return _answer_contradiction(entity, query, narratives)
     if intent == Intent.EVOLUTION:
         entity = _detect_entity(query, report)
         return _answer_evolution(entity, query, narratives)
@@ -233,6 +266,64 @@ def _filter_narrative_for_entity(
             ))
 
     return tuple(all_phases), tuple(scoped_transitions)
+
+
+def _answer_contradiction(
+    entity_name: str | None,
+    query: str,
+    narratives: list[NarrativeReconstruction],
+) -> str:
+    """Produce a contradiction/change answer from extracted positions."""
+    # Collect positions from all narrative phases.
+    all_positions = []
+    for narr in narratives:
+        for phase in narr.timeline:
+            all_positions.extend(extract_positions(phase))
+
+    # Scope to entity when present.
+    label = entity_name or query
+    if entity_name:
+        scoped = list(collect_positions_for_entity(tuple(all_positions), entity_name))
+    else:
+        scoped = all_positions
+
+    lines = [f"Contradiction/change analysis: {label}", ""]
+
+    # Case A: fewer than 2 positions.
+    if len(scoped) < 2:
+        lines.append("  Insufficient evidence to determine contradiction or change.")
+        if scoped:
+            lines.append("")
+            lines.append("  Extracted position(s):")
+            for p in scoped:
+                date_part = f"[{p.date}] " if p.date else ""
+                lines.append(f"    - {date_part}({p.stance_marker}) {p.text}")
+        return "\n".join(lines)
+
+    contradictions = detect_contradictions(label, scoped)
+
+    # Case B: 2+ positions, no contradictions.
+    if not contradictions:
+        lines.append("  No contradiction or meaningful change signal detected.")
+        lines.append("")
+        lines.append(f"  Positions ({len(scoped)}):")
+        from rag.narrative.positions import _sort_key
+        for p in sorted(scoped, key=_sort_key):
+            date_part = f"[{p.date}] " if p.date else ""
+            lines.append(f"    - {date_part}({p.stance_marker}) {p.text}")
+        return "\n".join(lines)
+
+    # Case C: 1+ contradictions detected.
+    lines.append("  Possible contradiction/change detected.")
+    lines.append("")
+    lines.append(f"  Detected change(s) ({len(contradictions)}):")
+    for c in contradictions:
+        lines.append(f"    [{c.date_range}] possible {c.change_type}")
+        lines.append(f"      Earlier: ({c.earlier.stance_marker}) {c.earlier.text}")
+        lines.append(f"      Later:   ({c.later.stance_marker}) {c.later.text}")
+        lines.append(f"      Signal:  {c.signal}")
+
+    return "\n".join(lines)
 
 
 def _answer_evolution(
@@ -495,6 +586,7 @@ def _answer_unknown(report: PatternReport) -> str:
         "  - Who are the main people? (entity-focused)",
         "  - What happened with [name]? (entity-scoped)",
         "  - How did my thinking about [name] change? (evolution)",
+        "  - Where did I contradict myself? (contradiction/change)",
         "  - What are the main themes? (theme-focused)",
         "  - Who connects multiple topics? (cross-topic)",
         "  - When were things most active? (temporal intensity)",

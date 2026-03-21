@@ -384,6 +384,7 @@ class Contradiction:
     later: Position       # chronologically later position
     signal: str           # deterministic reason string
     date_range: str       # concise range, e.g. "2025-03-01 to 2025-06-01"
+    change_type: str      # "reversal" | "softening" | "strengthening" | "evolution"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -392,7 +393,77 @@ class Contradiction:
             "later": self.later.to_dict(),
             "signal": self.signal,
             "date_range": self.date_range,
+            "change_type": self.change_type,
         }
+
+
+# ---------------------------------------------------------------------------
+# Phase 14B — Change type classification
+# ---------------------------------------------------------------------------
+
+# Marker strength ordering: higher = more certain/decisive.
+_MARKER_STRENGTH: dict[str, int] = {
+    "i feel like": 1,
+    "i noticed": 1,
+    "i think": 2,
+    "i don't think": 2,
+    "i believe": 3,
+    "i don't believe": 3,
+    "i understand": 3,
+    "i learned": 3,
+    "i figured out": 3,
+    "i realized": 4,
+    "i'm sure": 5,
+    "i decided": 5,
+    "i concluded": 5,
+    # Self-revision markers — not used for strength comparison.
+    "i was wrong about": 0,
+    "i changed my mind": 0,
+    "i no longer": 0,
+    "i used to think": 0,
+}
+
+
+def _classify_change_type(earlier: Position, later: Position, signal: str) -> str:
+    """Classify a detected change signal into a change type.
+
+    Priority:
+    1. reversal — explicit self-revision, strong negation change, or sentiment reversal
+    2. softening — later marker weaker than earlier
+    3. strengthening — later marker stronger than earlier
+    4. evolution — fallback for shifts that don't fit the above
+    """
+    # Explicit self-revision markers are always reversals.
+    if later.stance_marker in _SELF_REVISION_MARKERS:
+        return "reversal"
+
+    # Sentiment reversal (positive ↔ negative) is a reversal.
+    if "positive to negative" in signal or "negative to positive" in signal:
+        return "reversal"
+
+    # Strong negation change is a reversal.
+    if "negation introduced" in signal or "negation removed" in signal:
+        earlier_strength = _MARKER_STRENGTH.get(earlier.stance_marker, 2)
+        later_strength = _MARKER_STRENGTH.get(later.stance_marker, 2)
+        # If strengths are comparable, negation flip = reversal.
+        if abs(earlier_strength - later_strength) <= 1:
+            return "reversal"
+        # If later is weaker + negated, it's a softening of the opposite stance.
+        if later_strength < earlier_strength:
+            return "softening"
+        # If later is stronger + negated, it's a strengthening of the opposite stance.
+        if later_strength > earlier_strength:
+            return "strengthening"
+
+    # No negation/sentiment signal — check marker strength for softening/strengthening.
+    earlier_strength = _MARKER_STRENGTH.get(earlier.stance_marker, 2)
+    later_strength = _MARKER_STRENGTH.get(later.stance_marker, 2)
+    if later_strength < earlier_strength:
+        return "softening"
+    if later_strength > earlier_strength:
+        return "strengthening"
+
+    return "evolution"
 
 
 def _date_range_str(earlier: Position, later: Position) -> str:
@@ -435,12 +506,14 @@ def detect_contradictions(
         later = sorted_positions[i + 1]
         signal = _detect_shift(earlier, later)
         if signal:
+            change_type = _classify_change_type(earlier, later, signal)
             contradictions.append(Contradiction(
                 entity=entity,
                 earlier=earlier,
                 later=later,
                 signal=signal,
                 date_range=_date_range_str(earlier, later),
+                change_type=change_type,
             ))
 
     return contradictions

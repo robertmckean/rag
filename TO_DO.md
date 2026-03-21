@@ -32,13 +32,13 @@ What works:
 - [x] Temporal position comparison with shift detection heuristics (Phase 13B)
 - [x] Evolution query routing with honest fallback behavior (Phase 13C)
 - [x] Contradiction/change signal detection via deterministic heuristics (Phase 14A)
-- [x] 494 tests passing
+- [x] 521 tests passing
 
 What does not work:
 
 - [x] ~~Cannot scope queries to a specific entity~~ → entity-scoped routing works (Phase 10A)
-- [ ] Cannot track how thinking about a topic evolved across time
-- [ ] Cannot detect contradictions or reversals in past positions
+- [x] ~~Cannot track how thinking about a topic evolved across time~~ → evolution query routing works (Phase 13)
+- [x] ~~Cannot detect contradictions or reversals in past positions~~ → contradiction detection works (Phase 14)
 - [ ] Cannot chain narratives across multiple topics/queries
 - [ ] Cannot surface forgotten conclusions
 - [ ] Cannot distinguish user experience from user-relayed explanation
@@ -193,21 +193,21 @@ Prerequisite: Phase 13A (position extraction).
 
 ### 14B: Change classification
 
-- [ ] Classify each detected change as one of:
+- [x] Classify each detected change as one of:
       - `reversal` — direct contradiction of prior position
       - `softening` — weaker version of prior position
       - `strengthening` — stronger version of prior position
       - `evolution` — shift to different but not contradictory position
-- [ ] Add `change_type: str` field to Contradiction model
-- [ ] Add test: reversal vs softening vs strengthening correctly classified
-- [ ] Add test: classification is deterministic
+- [x] Add `change_type: str` field to Contradiction model
+- [x] Add test: reversal vs softening vs strengthening correctly classified
+- [x] Add test: classification is deterministic
 
 ### 14C: Router integration
 
-- [ ] Add CONTRADICTION intent to router (keywords: "contradict",
+- [x] Add CONTRADICTION intent to router (keywords: "contradict",
       "contradiction", "reversed", "grew", "growth", "clearer", "changed mind")
-- [ ] Wire contradiction detection into answer formatting
-- [ ] Validate on real corpus: do detected contradictions feel real and grounded?
+- [x] Wire contradiction detection into answer formatting
+- [x] Validate on real corpus: do detected contradictions feel real and grounded?
 
 ---
 

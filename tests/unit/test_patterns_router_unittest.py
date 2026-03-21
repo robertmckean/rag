@@ -796,5 +796,97 @@ class EvolutionAnswerTests(unittest.TestCase):
         self.assertTrue(all(a == answers[0] for a in answers))
 
 
+class ContradictionIntentTests(unittest.TestCase):
+    """Tests for CONTRADICTION intent classification."""
+
+    def test_contradict_keyword(self) -> None:
+        intent = classify_intent("where did I contradict myself")
+        self.assertEqual(intent, Intent.CONTRADICTION)
+
+    def test_reversed_keyword(self) -> None:
+        intent = classify_intent("what did I reverse about boundaries")
+        self.assertEqual(intent, Intent.CONTRADICTION)
+
+    def test_grew_keyword(self) -> None:
+        intent = classify_intent("where did I grew")
+        self.assertEqual(intent, Intent.CONTRADICTION)
+
+    def test_changed_my_mind_phrase(self) -> None:
+        report = _populated_report()
+        intent = classify_intent("did I changed my mind about Marc", report)
+        self.assertEqual(intent, Intent.CONTRADICTION)
+
+    def test_entity_plus_contradiction(self) -> None:
+        report = _populated_report()
+        intent = classify_intent("did Marc reverse", report)
+        self.assertEqual(intent, Intent.CONTRADICTION)
+
+    def test_contradiction_beats_evolution(self) -> None:
+        """Contradiction keywords take priority over evolution keywords."""
+        report = _populated_report()
+        intent = classify_intent("did I contradict my evolving thinking about Marc", report)
+        self.assertEqual(intent, Intent.CONTRADICTION)
+
+    def test_evolution_without_contradiction(self) -> None:
+        """Evolution query without contradiction keywords stays EVOLUTION."""
+        report = _populated_report()
+        intent = classify_intent("how did my thinking about Marc evolve", report)
+        self.assertEqual(intent, Intent.EVOLUTION)
+
+    def test_deterministic(self) -> None:
+        results = [classify_intent("where did I contradict myself") for _ in range(5)]
+        self.assertTrue(all(r == results[0] for r in results))
+
+
+class ContradictionAnswerTests(unittest.TestCase):
+    """Tests for contradiction answer formatting."""
+
+    def test_sparse_fallback(self) -> None:
+        report = _populated_report()
+        narr = _sparse_narrative()
+        answer = route_answer("where did I contradict myself about Marc", report, [narr])
+        self.assertIn("Insufficient evidence", answer)
+
+    def test_no_contradiction_case(self) -> None:
+        report = _populated_report()
+        narr = _stable_narrative()
+        answer = route_answer("where did I contradict myself about Marc", report, [narr])
+        self.assertIn("No contradiction", answer)
+        self.assertNotIn("Possible contradiction", answer)
+
+    def test_contradiction_detected(self) -> None:
+        report = _populated_report()
+        narr = _evolution_narrative()
+        answer = route_answer("where did I contradict myself about Marc", report, [narr])
+        self.assertIn("Possible contradiction/change detected", answer)
+        self.assertIn("possible reversal", answer)
+
+    def test_entity_scoped(self) -> None:
+        report = _populated_report()
+        narr = _evolution_narrative()
+        answer = route_answer("where did I contradict myself about Marc", report, [narr])
+        # Craig position should not appear.
+        self.assertNotIn("Craig means well", answer)
+
+    def test_topic_level(self) -> None:
+        report = _empty_report()
+        narr = _evolution_narrative()
+        answer = route_answer("where did I contradict myself", report, [narr])
+        self.assertIn("Contradiction/change analysis", answer)
+
+    def test_no_narrative_data(self) -> None:
+        report = _populated_report()
+        narr = _make_narrative()
+        answer = route_answer("where did I contradict myself about Marc", report, [narr])
+        self.assertIn("Insufficient evidence", answer)
+
+    def test_deterministic_output(self) -> None:
+        report = _populated_report()
+        narr = _evolution_narrative()
+        answers = [route_answer("where did I contradict myself about Marc", report, [narr])
+                   for _ in range(5)]
+        self.assertTrue(all(a == answers[0] for a in answers))
+
+
 if __name__ == "__main__":
     unittest.main()

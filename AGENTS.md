@@ -13,7 +13,7 @@ retrieved evidence, and extracts recurring-entity patterns across narratives.
 
 ## Project Status
 
-- Active milestone: Phase 14B change classification (see TO_DO.md)
+- Active milestone: Phase 15A cross-narrative phase linking (see TO_DO.md)
 - Phase 1 normalization is complete and its output contract is frozen
 - Phase 2 currently supports BM25 lexical retrieval, semantic retrieval over
   run-local message embeddings, hybrid retrieval, contextual window results,
@@ -29,6 +29,11 @@ retrieved evidence, and extracts recurring-entity patterns across narratives.
 - Phase 7 supports recurring-entity pattern extraction across narratives with
   explicit alias normalization, content snippets, deterministic topic clustering
   via agglomerative term-overlap merging, and deterministic output
+- Phase 13 supports deterministic user-position extraction via stance markers,
+  temporal position comparison with shift detection, and evolution query routing
+- Phase 14 supports contradiction/change signal detection with change-type
+  classification (reversal/softening/strengthening/evolution) and contradiction
+  query routing
 - Hybrid retrieval is now the active retrieval extension path; BM25 remains the
   lexical baseline and semantic retrieval is additive rather than a replacement
 - Prefer the current code in `src/rag/` and the run artifacts under

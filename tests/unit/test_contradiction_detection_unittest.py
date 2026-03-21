@@ -226,8 +226,155 @@ class SerializationTests(unittest.TestCase):
         self.assertEqual(d["entity"], "test")
         self.assertIn("signal", d)
         self.assertIn("date_range", d)
+        self.assertIn("change_type", d)
         self.assertIsInstance(d["earlier"], dict)
         self.assertIsInstance(d["later"], dict)
+
+
+# -----------------------------------------------------------------------
+# Phase 14B — Change type classification tests
+# -----------------------------------------------------------------------
+
+class ReversalClassificationTests(unittest.TestCase):
+    """Verify reversal classification."""
+
+    def test_explicit_self_correction_is_reversal(self) -> None:
+        positions = [
+            _pos("I think Marc is fine", date="2025-03-01"),
+            _pos("I changed my mind about Marc", date="2025-06-01",
+                 stance_marker="i changed my mind"),
+        ]
+        result = detect_contradictions("Marc", positions)
+        self.assertEqual(result[0].change_type, "reversal")
+
+    def test_was_wrong_is_reversal(self) -> None:
+        positions = [
+            _pos("I think this is correct", date="2025-03-01"),
+            _pos("I was wrong about that", date="2025-06-01",
+                 stance_marker="i was wrong about"),
+        ]
+        result = detect_contradictions("test", positions)
+        self.assertEqual(result[0].change_type, "reversal")
+
+    def test_negation_reversal_same_strength(self) -> None:
+        positions = [
+            _pos("I think this works", date="2025-03-01"),
+            _pos("I don't think this works", date="2025-06-01",
+                 stance_marker="i don't think"),
+        ]
+        result = detect_contradictions("test", positions)
+        self.assertEqual(result[0].change_type, "reversal")
+
+    def test_positive_to_negative_is_reversal(self) -> None:
+        positions = [
+            _pos("I think this is great and I trust the outcome", date="2025-03-01"),
+            _pos("I think this is bad and I'm frustrated", date="2025-06-01"),
+        ]
+        result = detect_contradictions("test", positions)
+        self.assertEqual(result[0].change_type, "reversal")
+
+    def test_negative_to_positive_is_reversal(self) -> None:
+        positions = [
+            _pos("I'm worried and frustrated", date="2025-03-01"),
+            _pos("I feel confident and comfortable now", date="2025-06-01",
+                 stance_marker="i feel like"),
+        ]
+        result = detect_contradictions("test", positions)
+        self.assertEqual(result[0].change_type, "reversal")
+
+
+class SofteningClassificationTests(unittest.TestCase):
+    """Verify softening classification."""
+
+    def test_sure_to_think_is_softening(self) -> None:
+        """'I'm sure' (5) → 'I think' (2) with negation = weaker + negated = softening."""
+        positions = [
+            _pos("I'm sure this is right", date="2025-03-01", stance_marker="i'm sure"),
+            _pos("I don't think this is right anymore", date="2025-06-01",
+                 stance_marker="i don't think"),
+        ]
+        result = detect_contradictions("test", positions)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].change_type, "softening")
+
+    def test_decided_to_feel_like_is_softening(self) -> None:
+        """'I decided' (5) → 'I feel like' (1) with negation."""
+        positions = [
+            _pos("I decided to trust this", date="2025-03-01", stance_marker="i decided"),
+            _pos("I feel like I don't trust this", date="2025-06-01",
+                 stance_marker="i feel like"),
+        ]
+        result = detect_contradictions("test", positions)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].change_type, "softening")
+
+
+class StrengtheningClassificationTests(unittest.TestCase):
+    """Verify strengthening classification."""
+
+    def test_think_to_sure_is_strengthening(self) -> None:
+        """'I think' (2) → 'I'm sure' (5) with negation = stronger + negated = strengthening."""
+        positions = [
+            _pos("I don't think this works", date="2025-03-01",
+                 stance_marker="i don't think"),
+            _pos("I'm sure this doesn't work", date="2025-06-01",
+                 stance_marker="i'm sure"),
+        ]
+        result = detect_contradictions("test", positions)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].change_type, "strengthening")
+
+    def test_feel_like_to_decided_is_strengthening(self) -> None:
+        """'I feel like' (1) → 'I decided' (5) with negation."""
+        positions = [
+            _pos("I feel like this won't work", date="2025-03-01",
+                 stance_marker="i feel like"),
+            _pos("I decided this is not worth it", date="2025-06-01",
+                 stance_marker="i decided"),
+        ]
+        result = detect_contradictions("test", positions)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].change_type, "strengthening")
+
+
+class EvolutionClassificationTests(unittest.TestCase):
+    """Verify evolution fallback classification."""
+
+    def test_non_opposed_shift_is_evolution(self) -> None:
+        """Evolution is the fallback when signal doesn't match reversal,
+        softening, or strengthening criteria."""
+        from rag.narrative.positions import _classify_change_type
+        # Same strength markers + generic signal → evolution.
+        earlier = _pos("I think X", stance_marker="i think")
+        later = _pos("I think Y differently", stance_marker="i think")
+        result = _classify_change_type(earlier, later, "topic shift detected")
+        self.assertEqual(result, "evolution")
+
+
+class StableNotClassifiedTests(unittest.TestCase):
+    """Verify stable positions produce no classifications."""
+
+    def test_stable_no_change_type(self) -> None:
+        positions = [
+            _pos("I think Marc is trustworthy", date="2025-03-01"),
+            _pos("I believe Marc is a good friend", date="2025-06-01"),
+        ]
+        result = detect_contradictions("Marc", positions)
+        self.assertEqual(len(result), 0)
+
+
+class ClassificationDeterminismTests(unittest.TestCase):
+    """Verify deterministic classification."""
+
+    def test_deterministic_change_type(self) -> None:
+        positions = [
+            _pos("I trust Marc", date="2025-03-01"),
+            _pos("I don't trust Marc anymore", date="2025-06-01",
+                 stance_marker="i don't think"),
+        ]
+        results = [detect_contradictions("Marc", positions) for _ in range(5)]
+        types = [r[0].change_type for r in results]
+        self.assertTrue(all(t == types[0] for t in types))
 
 
 if __name__ == "__main__":
