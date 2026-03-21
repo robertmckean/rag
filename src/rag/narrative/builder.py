@@ -263,13 +263,17 @@ def _build_phase(items: list[EvidenceItem], query_terms: tuple[str, ...]) -> Nar
     else:
         date_range = None
 
-    # Deterministic label: date range + dominant entities.
-    entities: dict[str, int] = {}
+    # Deterministic label: date range + dominant entities (user-sourced preferred).
+    user_entities: dict[str, int] = {}
+    all_entities: dict[str, int] = {}
     for item in items:
         for ent in _entity_terms(item):
-            entities[ent] = entities.get(ent, 0) + 1
-    # Pick top 2 entities by frequency, breaking ties alphabetically.
-    sorted_entities = sorted(entities.items(), key=lambda x: (-x[1], x[0]))
+            all_entities[ent] = all_entities.get(ent, 0) + 1
+            if item.author_role == "user":
+                user_entities[ent] = user_entities.get(ent, 0) + 1
+    # Prefer entities from user items; fall back to all entities if no user items.
+    entity_source = user_entities if user_entities else all_entities
+    sorted_entities = sorted(entity_source.items(), key=lambda x: (-x[1], x[0]))
     dominant = [e[0] for e in sorted_entities[:2]]
 
     if date_range and dominant:
@@ -281,9 +285,13 @@ def _build_phase(items: list[EvidenceItem], query_terms: tuple[str, ...]) -> Nar
     else:
         label = f"Phase (evidence {', '.join(evidence_ids)})"
 
-    # Description: grounded in evidence excerpts.
+    # Description: grounded in evidence excerpts, user-role first.
+    user_items = [item for item in items if item.author_role == "user"]
+    assistant_items = [item for item in items if item.author_role != "user"]
+    ordered_items = user_items + assistant_items
+
     description_parts: list[str] = []
-    for item in items:
+    for item in ordered_items:
         date = _parse_date(item.citation.created_at)
         prefix = f"({date}) " if date else ""
         excerpt = item.citation.excerpt

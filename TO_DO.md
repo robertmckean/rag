@@ -26,7 +26,8 @@ What works:
 - [x] Entity-scoped query routing via ENTITY_SCOPED intent (Phase 10A)
 - [x] Entity-scoped narrative timeline filtering (Phase 10B)
 - [x] Assistant restatement dedup via token-overlap downweighting (Phase 11)
-- [x] 406 tests passing
+- [x] Role-aware phase descriptions and label entity selection (Phase 12A)
+- [x] 415 tests passing
 
 What does not work:
 
@@ -105,14 +106,14 @@ Prerequisite: Phase 11 (restatement dedup prevents double-counting).
 
 ### 12A: Role-aware phase descriptions
 
-- [ ] In `builder.py` phase description construction, when building the
+- [x] In `builder.py` phase description construction, when building the
       pipe-separated excerpt list, place user-role excerpts before
       assistant-role excerpts within each phase
-- [ ] When selecting the phase label, prefer user-authored excerpt text
-      over assistant-authored excerpt text
-- [ ] Add test: phase with mixed user/assistant evidence shows user content
+- [x] When selecting the phase label, prefer user-authored entity sources
+      over assistant-authored entity sources
+- [x] Add test: phase with mixed user/assistant evidence shows user content
       first in description
-- [ ] Add test: phase with only assistant evidence still produces valid output
+- [x] Add test: phase with only assistant evidence still produces valid output
 
 ### 12B: Role-aware narrative summary
 

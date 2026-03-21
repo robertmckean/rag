@@ -8,6 +8,7 @@ from rag.narrative.builder import (
     DEFAULT_GAP_THRESHOLD_DAYS,
     DEFAULT_PHASE_WINDOW_DAYS,
     build_narrative,
+    _build_phase,
     _days_between,
     _detect_gaps,
     _detect_limitations,
@@ -419,6 +420,114 @@ class HelperTests(unittest.TestCase):
         days = _days_between("2025-02-07", "2025-02-14")
         self.assertGreater(days, 0)
         self.assertLess(days, 15)
+
+
+class RoleAwareDescriptionTests(unittest.TestCase):
+    """Tests for role-aware excerpt ordering in phase descriptions (Phase 12A)."""
+
+    def test_mixed_phase_user_excerpts_first(self) -> None:
+        """User excerpts should appear before assistant excerpts in description."""
+        items = [
+            _make_evidence(1, "Assistant analysis of the situation.", "2025-03-01", author_role="assistant"),
+            _make_evidence(2, "I told Marc I had no interest.", "2025-03-01", author_role="user"),
+            _make_evidence(3, "That's a powerful statement.", "2025-03-01", author_role="assistant"),
+        ]
+        phase = _build_phase(items, ())
+        parts = phase.description.split(" | ")
+        # User excerpt should be first.
+        self.assertIn("[user]", parts[0])
+        # Assistant excerpts should follow.
+        self.assertIn("[assistant]", parts[1])
+        self.assertIn("[assistant]", parts[2])
+
+    def test_mixed_phase_user_relative_order_preserved(self) -> None:
+        """Multiple user items should maintain their original relative order."""
+        items = [
+            _make_evidence(1, "First user message.", "2025-03-01", author_role="user"),
+            _make_evidence(2, "Assistant reply.", "2025-03-01", author_role="assistant"),
+            _make_evidence(3, "Second user message.", "2025-03-02", author_role="user"),
+        ]
+        phase = _build_phase(items, ())
+        parts = phase.description.split(" | ")
+        self.assertIn("First user message", parts[0])
+        self.assertIn("Second user message", parts[1])
+        self.assertIn("Assistant reply", parts[2])
+
+    def test_user_only_phase_unchanged(self) -> None:
+        """Phase with only user excerpts should be unchanged."""
+        items = [
+            _make_evidence(1, "User message one.", "2025-03-01", author_role="user"),
+            _make_evidence(2, "User message two.", "2025-03-02", author_role="user"),
+        ]
+        phase = _build_phase(items, ())
+        parts = phase.description.split(" | ")
+        self.assertEqual(len(parts), 2)
+        self.assertIn("[user]", parts[0])
+        self.assertIn("[user]", parts[1])
+        self.assertIn("message one", parts[0])
+        self.assertIn("message two", parts[1])
+
+    def test_assistant_only_phase_unchanged(self) -> None:
+        """Phase with only assistant excerpts should still produce valid output."""
+        items = [
+            _make_evidence(1, "Assistant remark one.", "2025-03-01", author_role="assistant"),
+            _make_evidence(2, "Assistant remark two.", "2025-03-02", author_role="assistant"),
+        ]
+        phase = _build_phase(items, ())
+        parts = phase.description.split(" | ")
+        self.assertEqual(len(parts), 2)
+        self.assertIn("[assistant]", parts[0])
+        self.assertIn("[assistant]", parts[1])
+
+    def test_deterministic_description(self) -> None:
+        items = [
+            _make_evidence(1, "Assistant says something.", "2025-03-01", author_role="assistant"),
+            _make_evidence(2, "User says something.", "2025-03-01", author_role="user"),
+        ]
+        descriptions = [_build_phase(items, ()).description for _ in range(5)]
+        self.assertTrue(all(d == descriptions[0] for d in descriptions))
+
+
+class RoleAwareLabelTests(unittest.TestCase):
+    """Tests for role-aware entity selection in phase labels (Phase 12A)."""
+
+    def test_label_prefers_user_entities(self) -> None:
+        """When user and assistant items mention different entities, label uses user entities."""
+        items = [
+            _make_evidence(1, "Marc told me about the villa.", "2025-03-01", author_role="user"),
+            _make_evidence(2, "Craig was discussed in the analysis.", "2025-03-01", author_role="assistant"),
+        ]
+        phase = _build_phase(items, ())
+        # Marc is from user; Craig is from assistant only.
+        self.assertIn("Marc", phase.label)
+        self.assertNotIn("Craig", phase.label)
+
+    def test_label_falls_back_to_assistant_entities(self) -> None:
+        """When no user entities exist, label uses assistant entities."""
+        items = [
+            _make_evidence(1, "Craig was mentioned in the response.", "2025-03-01", author_role="assistant"),
+        ]
+        phase = _build_phase(items, ())
+        self.assertIn("Craig", phase.label)
+
+    def test_label_mixed_entities_user_frequency_wins(self) -> None:
+        """User entity frequency determines dominance, not total frequency."""
+        items = [
+            _make_evidence(1, "Marc was there.", "2025-03-01", author_role="user"),
+            _make_evidence(2, "Marc came back.", "2025-03-02", author_role="user"),
+            _make_evidence(3, "Benz was mentioned by the assistant five times: Benz Benz Benz Benz.", "2025-03-02", author_role="assistant"),
+        ]
+        phase = _build_phase(items, ())
+        # Marc appears 2x in user items; Benz appears only in assistant.
+        self.assertIn("Marc", phase.label)
+
+    def test_label_deterministic(self) -> None:
+        items = [
+            _make_evidence(1, "Marc said hello.", "2025-03-01", author_role="user"),
+            _make_evidence(2, "Craig replied.", "2025-03-01", author_role="assistant"),
+        ]
+        labels = [_build_phase(items, ()).label for _ in range(5)]
+        self.assertTrue(all(l == labels[0] for l in labels))
 
 
 if __name__ == "__main__":
